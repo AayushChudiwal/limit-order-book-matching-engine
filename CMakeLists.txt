@@ -22,3 +22,6 @@ if(LOB_ENABLE_SANITIZERS)
   target_compile_options(lob_engine PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
   target_link_options(lob_engine PUBLIC -fsanitize=address,undefined)
 endif()
+
+enable_testing()
+add_subdirectory(tests)
