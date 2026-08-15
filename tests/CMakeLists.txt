@@ -18,8 +18,9 @@ add_executable(lob_tests
   test_market_sweep.cpp
   test_modify.cpp
   test_itch_decode.cpp
+  test_itch_integrity_checker.cpp
 )
-target_link_libraries(lob_tests PRIVATE lob_engine GTest::gtest_main)
+target_link_libraries(lob_tests PRIVATE lob_engine lob_itch GTest::gtest_main)
 target_compile_options(lob_tests PRIVATE -Wall -Wextra -Wpedantic)
 
 if(LOB_ENABLE_SANITIZERS)

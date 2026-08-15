@@ -23,5 +23,22 @@ if(LOB_ENABLE_SANITIZERS)
   target_link_options(lob_engine PUBLIC -fsanitize=address,undefined)
 endif()
 
+# ITCH wire parsing/validation is a separate library from the engine
+# itself: it depends on nothing engine-specific (the integrity checker is
+# pure order-reference bookkeeping, no price levels), and keeping it
+# separate means a future consumer of just the parser -- e.g. a different
+# venue's replay tool -- doesn't have to link the matching engine at all.
+add_library(lob_itch
+  src/itch/integrity_checker.cpp
+)
+target_include_directories(lob_itch PUBLIC include)
+target_compile_features(lob_itch PUBLIC cxx_std_20)
+target_compile_options(lob_itch PRIVATE -Wall -Wextra -Wpedantic)
+
+if(LOB_ENABLE_SANITIZERS)
+  target_compile_options(lob_itch PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(lob_itch PUBLIC -fsanitize=address,undefined)
+endif()
+
 enable_testing()
 add_subdirectory(tests)
