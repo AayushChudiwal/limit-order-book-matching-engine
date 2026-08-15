@@ -1,0 +1,31 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+out/
+
+# CMake generated
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+Makefile
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Sanitizer / fuzzer artifacts (Phase 3+)
+*.profraw
+crash-*
+
+# Real market data is large and not something we want to commit (Phase 2+)
+*.NASDAQ_ITCH50
+*.PSX_ITCH_50
+*.itch
+*.itch.gz
