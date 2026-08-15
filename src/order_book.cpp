@@ -273,4 +273,21 @@ std::optional<Side> OrderBook::SideOf(OrderId id) const {
     return it == locations_.end() ? std::nullopt : std::optional<Side>(it->second.side);
 }
 
+std::vector<PriceLevel> OrderBook::TopLevels(Side side, int depth) const {
+    std::vector<PriceLevel> levels;
+    levels.reserve(static_cast<std::size_t>(depth));
+    if (side == Side::Buy) {
+        for (auto it = bids_.begin(); it != bids_.end() && static_cast<int>(levels.size()) < depth;
+             ++it) {
+            levels.push_back({it->first, SumLevel(it->second)});
+        }
+    } else {
+        for (auto it = asks_.begin(); it != asks_.end() && static_cast<int>(levels.size()) < depth;
+             ++it) {
+            levels.push_back({it->first, SumLevel(it->second)});
+        }
+    }
+    return levels;
+}
+
 }  // namespace lob

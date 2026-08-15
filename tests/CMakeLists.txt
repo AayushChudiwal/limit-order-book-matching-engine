@@ -18,6 +18,7 @@ add_executable(lob_tests
   test_market_sweep.cpp
   test_modify.cpp
   test_reduce_and_side_of.cpp
+  test_top_levels.cpp
   test_itch_decode.cpp
   test_itch_integrity_checker.cpp
 )

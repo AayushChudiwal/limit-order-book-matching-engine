@@ -4,11 +4,17 @@
 #include <map>
 #include <optional>
 #include <unordered_map>
+#include <vector>
 
 #include "lob/listener.hpp"
 #include "lob/types.hpp"
 
 namespace lob {
+
+struct PriceLevel {
+    Price price;
+    Quantity total_quantity;
+};
 
 // Deliberately naive, obviously-correct reference implementation.
 //
@@ -66,6 +72,15 @@ class OrderBook {
     [[nodiscard]] std::optional<Price> BestBid() const;
     [[nodiscard]] std::optional<Price> BestAsk() const;
     [[nodiscard]] bool Empty() const { return bids_.empty() && asks_.empty(); }
+
+    // The best `depth` price levels on one side, best-first, each with its
+    // aggregated resting quantity. Fewer than `depth` entries come back if
+    // the side doesn't have that many distinct price levels. Exists purely
+    // for external validation (Phase 2's cross-implementation diff against
+    // an independent ITCH reconstructor) -- nothing inside this engine
+    // needs more than BestBid/BestAsk, so this is a read-only reporting
+    // query, not a hot-path primitive.
+    [[nodiscard]] std::vector<PriceLevel> TopLevels(Side side, int depth) const;
 
     // Which side a resting order is on. ITCH's Order Replace message omits
     // side (the spec is explicit: it can't change, so consumers must
