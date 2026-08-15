@@ -11,6 +11,7 @@ FetchContent_MakeAvailable(googletest)
 
 add_executable(lob_tests
   test_fills.cpp
+  test_priority.cpp
 )
 target_link_libraries(lob_tests PRIVATE lob_engine GTest::gtest_main)
 target_compile_options(lob_tests PRIVATE -Wall -Wextra -Wpedantic)
