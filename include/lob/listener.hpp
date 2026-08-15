@@ -9,6 +9,12 @@ enum class RejectReason : std::uint8_t {
     DuplicateOrderId,
     InvalidQuantity,
     InvalidPrice,
+    // Reducing a resting order by more than its remaining quantity. Only
+    // reachable through OrderBook::ReduceRestingQuantity() (Phase 2's ITCH
+    // replay path) -- Phase 1's own API surface has no way to trigger this,
+    // since AddLimitOrder/AddMarketOrder compute their own trade sizes as
+    // min(remaining, resting), never an externally-supplied amount.
+    InsufficientQuantity,
 };
 
 struct Fill {

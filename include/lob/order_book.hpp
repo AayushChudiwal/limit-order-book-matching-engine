@@ -49,9 +49,31 @@ class OrderBook {
     // the priority rules this enforces.
     void ModifyOrder(OrderId id, Price new_price, Quantity new_quantity);
 
+    // Reduces a resting order's quantity by an amount this engine did not
+    // itself compute, removing it entirely if that reaches zero -- and,
+    // unlike AddLimitOrder/AddMarketOrder, never emits OnFill. A Fill in
+    // this engine's model means "an aggressor order this engine matched
+    // against a resting one"; a feed that reports its own already-resolved
+    // executions (ITCH's Order Executed messages, or its Order Cancel
+    // messages, which are mechanically the same reduce-or-remove operation
+    // under a different label -- see lob/itch/messages.hpp) never tells you
+    // who the aggressor was, so there is no Fill to construct. This is why
+    // Phase 2's ITCH replay can't reuse the live-matching path for
+    // someone else's order: it can only apply the state transition the
+    // feed already computed.
+    void ReduceRestingQuantity(OrderId id, Quantity amount);
+
     [[nodiscard]] std::optional<Price> BestBid() const;
     [[nodiscard]] std::optional<Price> BestAsk() const;
     [[nodiscard]] bool Empty() const { return bids_.empty() && asks_.empty(); }
+
+    // Which side a resting order is on. ITCH's Order Replace message omits
+    // side (the spec is explicit: it can't change, so consumers must
+    // remember it from the original Add) -- this is that memory, exposed
+    // as a read-only query rather than duplicated into a second tracking
+    // map in the replay adapter, since the engine already has to know it
+    // internally to place the order in the first place.
+    [[nodiscard]] std::optional<Side> SideOf(OrderId id) const;
 
   private:
     struct RestingOrder {

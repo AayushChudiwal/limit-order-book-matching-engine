@@ -229,12 +229,48 @@ void OrderBook::ModifyOrder(OrderId id, Price new_price, Quantity new_quantity) 
     AddLimitOrder(id, loc.side, new_price, new_quantity);
 }
 
+void OrderBook::ReduceRestingQuantity(OrderId id, Quantity amount) {
+    auto it = locations_.find(id);
+    if (it == locations_.end()) {
+        listener_.OnOrderRejected(id, RejectReason::UnknownOrderId);
+        return;
+    }
+    const Location loc = it->second;
+    LevelQueue* level = LevelFor(loc.side, loc.price);
+    assert(level != nullptr);
+    auto order_it = std::find_if(level->begin(), level->end(),
+                                 [id](const RestingOrder& o) { return o.id == id; });
+    assert(order_it != level->end());
+
+    if (order_it->quantity.units < amount.units) {
+        // A real feed reducing an order below zero would mean this
+        // engine's reconstruction has already diverged from the feed's --
+        // report it rather than let the quantity go negative and corrupt
+        // every aggregate level total from here on.
+        listener_.OnOrderRejected(id, RejectReason::InsufficientQuantity);
+        return;
+    }
+
+    order_it->quantity -= amount;
+    if (order_it->quantity.units == 0) {
+        level->erase(order_it);
+        locations_.erase(it);
+        EraseLevelIfEmpty(loc.side, loc.price);
+    }
+    EmitLevelUpdate(loc.side, loc.price);
+}
+
 std::optional<Price> OrderBook::BestBid() const {
     return bids_.empty() ? std::nullopt : std::optional<Price>(bids_.begin()->first);
 }
 
 std::optional<Price> OrderBook::BestAsk() const {
     return asks_.empty() ? std::nullopt : std::optional<Price>(asks_.begin()->first);
+}
+
+std::optional<Side> OrderBook::SideOf(OrderId id) const {
+    auto it = locations_.find(id);
+    return it == locations_.end() ? std::nullopt : std::optional<Side>(it->second.side);
 }
 
 }  // namespace lob
