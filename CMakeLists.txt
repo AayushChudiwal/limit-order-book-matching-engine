@@ -30,6 +30,7 @@ endif()
 # venue's replay tool -- doesn't have to link the matching engine at all.
 add_library(lob_itch
   src/itch/integrity_checker.cpp
+  src/itch/mapped_file.cpp
 )
 target_include_directories(lob_itch PUBLIC include)
 target_compile_features(lob_itch PUBLIC cxx_std_20)
@@ -39,6 +40,12 @@ if(LOB_ENABLE_SANITIZERS)
   target_compile_options(lob_itch PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
   target_link_options(lob_itch PUBLIC -fsanitize=address,undefined)
 endif()
+
+add_executable(itch_replay
+  tools/itch_replay.cpp
+)
+target_link_libraries(itch_replay PRIVATE lob_engine lob_itch)
+target_compile_options(itch_replay PRIVATE -Wall -Wextra -Wpedantic)
 
 enable_testing()
 add_subdirectory(tests)
