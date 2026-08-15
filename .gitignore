@@ -24,8 +24,9 @@ _deps/
 *.profraw
 crash-*
 
-# Real market data is large and not something we want to commit (Phase 2+)
-*.NASDAQ_ITCH50
-*.PSX_ITCH_50
-*.itch
-*.itch.gz
+# Real market data is large (hundreds of MB to multiple GB) and not
+# something we want to commit -- everything under data/ is a downloaded or
+# decompressed input file, never a build artifact we author. Only small
+# derived summaries (e.g. message-type mix reports) get committed, from
+# wherever they're written outside this directory.
+/data/
