@@ -47,5 +47,11 @@ add_executable(itch_replay
 target_link_libraries(itch_replay PRIVATE lob_engine lob_itch)
 target_compile_options(itch_replay PRIVATE -Wall -Wextra -Wpedantic)
 
+add_executable(itch_snapshot_dump
+  tools/itch_snapshot_dump.cpp
+)
+target_link_libraries(itch_snapshot_dump PRIVATE lob_engine lob_itch)
+target_compile_options(itch_snapshot_dump PRIVATE -Wall -Wextra -Wpedantic)
+
 enable_testing()
 add_subdirectory(tests)
