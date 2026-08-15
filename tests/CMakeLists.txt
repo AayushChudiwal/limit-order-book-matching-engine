@@ -14,6 +14,7 @@ add_executable(lob_tests
   test_priority.cpp
   test_cancel.cpp
   test_self_crossing.cpp
+  test_empty_book.cpp
 )
 target_link_libraries(lob_tests PRIVATE lob_engine GTest::gtest_main)
 target_compile_options(lob_tests PRIVATE -Wall -Wextra -Wpedantic)
