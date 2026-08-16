@@ -30,8 +30,9 @@ add_executable(lob_tests
   test_fuzz_shrunk_regressions.cpp
   test_itch_decode.cpp
   test_itch_integrity_checker.cpp
+  test_bench_stats.cpp
 )
-target_link_libraries(lob_tests PRIVATE lob_itch lob_fuzz GTest::gtest_main)
+target_link_libraries(lob_tests PRIVATE lob_itch lob_fuzz lob_bench GTest::gtest_main)
 target_compile_options(lob_tests PRIVATE -Wall -Wextra -Wpedantic)
 
 if(LOB_ENABLE_SANITIZERS)

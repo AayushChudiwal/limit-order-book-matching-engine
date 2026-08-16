@@ -66,6 +66,9 @@ endif()
 # platform; see docs/benchmark_methodology.md for why.
 add_library(lob_bench
   src/bench/pmu.cpp
+  src/bench/stats.cpp
+  src/bench/scheduling.cpp
+  src/bench/frequency.cpp
 )
 target_include_directories(lob_bench PUBLIC include)
 target_compile_features(lob_bench PUBLIC cxx_std_20)
