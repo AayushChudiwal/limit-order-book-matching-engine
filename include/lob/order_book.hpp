@@ -150,9 +150,26 @@ class OrderBook {
     static Quantity SumLevel(const LevelQueue& level);
     static bool Crosses(Side aggressor_side, Price limit_price, Price level_price);
 
+    // The one place that finds an order by id within a level's FIFO
+    // queue -- RemoveFromLevel, ModifyOrder, and ReduceRestingQuantity
+    // all need exactly this lookup and used to each carry their own
+    // identical std::find_if. A linear scan is the right complexity here
+    // (not a bug to fix): real levels average ~1.3 orders on the
+    // captured PSX/NASDAQ data (see docs/benchmark_methodology.md), so
+    // this is effectively O(1) in practice; giving the scan itself O(1)
+    // structure is Phase 5's later intrusive-list step, not hygiene.
+    static LevelQueue::iterator FindOrderInLevel(LevelQueue& level, OrderId id);
+
     LevelQueue* LevelFor(Side side, Price price);
-    void EraseLevelIfEmpty(Side side, Price price);
-    void EmitLevelUpdate(Side side, Price price);
+
+    // Finds the level ONCE (a caller has just removed or reduced an
+    // order from it, so it's known to still exist), then either erases
+    // it if now empty or reports its current aggregate quantity --
+    // replaces the former EraseLevelIfEmpty()-then-EmitLevelUpdate()
+    // pair, which each did their own separate map lookup for the same
+    // level on every Cancel/Reduce/price-changing-Modify.
+    void PruneAndEmitLevelUpdate(Side side, Price price);
+
     void RestOrder(OrderId id, Side side, Price price, Quantity quantity);
     Quantity RemoveFromLevel(Side side, Price price, OrderId id);
 

@@ -29,24 +29,33 @@ OrderBook::LevelQueue* OrderBook::LevelFor(Side side, Price price) {
     return side == Side::Buy ? FindLevel(bids_, price) : FindLevel(asks_, price);
 }
 
-void OrderBook::EraseLevelIfEmpty(Side side, Price price) {
+OrderBook::LevelQueue::iterator OrderBook::FindOrderInLevel(LevelQueue& level, OrderId id) {
+    return std::find_if(level.begin(), level.end(),
+                        [id](const RestingOrder& o) { return o.id == id; });
+}
+
+void OrderBook::PruneAndEmitLevelUpdate(Side side, Price price) {
     if (side == Side::Buy) {
         auto it = bids_.find(price);
-        if (it != bids_.end() && it->second.empty()) {
+        assert(it != bids_.end() &&
+               "level must still exist immediately after removing an order from it");
+        if (it->second.empty()) {
             bids_.erase(it);
+            listener_.OnBookUpdate(side, price, Quantity{0});
+        } else {
+            listener_.OnBookUpdate(side, price, SumLevel(it->second));
         }
     } else {
         auto it = asks_.find(price);
-        if (it != asks_.end() && it->second.empty()) {
+        assert(it != asks_.end() &&
+               "level must still exist immediately after removing an order from it");
+        if (it->second.empty()) {
             asks_.erase(it);
+            listener_.OnBookUpdate(side, price, Quantity{0});
+        } else {
+            listener_.OnBookUpdate(side, price, SumLevel(it->second));
         }
     }
-}
-
-void OrderBook::EmitLevelUpdate(Side side, Price price) {
-    const LevelQueue* level = LevelFor(side, price);
-    const Quantity total = level ? SumLevel(*level) : Quantity{0};
-    listener_.OnBookUpdate(side, price, total);
 }
 
 void OrderBook::RestOrder(OrderId id, Side side, Price price, Quantity quantity) {
@@ -54,7 +63,9 @@ void OrderBook::RestOrder(OrderId id, Side side, Price price, Quantity quantity)
     level.push_back(RestingOrder{id, quantity});
     locations_[id] = Location{side, price};
     listener_.OnOrderAccepted(id);
-    EmitLevelUpdate(side, price);
+    // Already holding the level this order just joined -- emit directly
+    // instead of going through a second by-price lookup.
+    listener_.OnBookUpdate(side, price, SumLevel(level));
 }
 
 Quantity OrderBook::RemoveFromLevel(Side side, Price price, OrderId id) {
@@ -65,8 +76,7 @@ Quantity OrderBook::RemoveFromLevel(Side side, Price price, OrderId id) {
     // above via OnOrderRejected. If either of these fires, it's an engine
     // bug, which is exactly what assert (not an exception) is for.
     assert(level != nullptr && "locations_ points at a level that doesn't exist");
-    auto it = std::find_if(level->begin(), level->end(),
-                           [id](const RestingOrder& o) { return o.id == id; });
+    auto it = FindOrderInLevel(*level, id);
     assert(it != level->end() && "locations_ points at an order that isn't in its level");
     const Quantity quantity = it->quantity;
     level->erase(it);
@@ -166,10 +176,9 @@ void OrderBook::CancelOrder(OrderId id) {
     const Location loc = it->second;
     const Quantity removed_quantity = RemoveFromLevel(loc.side, loc.price, id);
     locations_.erase(it);
-    EraseLevelIfEmpty(loc.side, loc.price);
 
     listener_.OnOrderCancelled(id, removed_quantity);
-    EmitLevelUpdate(loc.side, loc.price);
+    PruneAndEmitLevelUpdate(loc.side, loc.price);
 }
 
 void OrderBook::Replace(OrderId old_id, OrderId new_id, Price new_price, Quantity new_quantity) {
@@ -195,8 +204,7 @@ void OrderBook::ModifyOrder(OrderId id, Price new_price, Quantity new_quantity) 
     const Location loc = it->second;
     LevelQueue* level = LevelFor(loc.side, loc.price);
     assert(level != nullptr);
-    auto order_it = std::find_if(level->begin(), level->end(),
-                                 [id](const RestingOrder& o) { return o.id == id; });
+    auto order_it = FindOrderInLevel(*level, id);
     assert(order_it != level->end());
 
     const bool same_price = new_price == loc.price;
@@ -213,7 +221,9 @@ void OrderBook::ModifyOrder(OrderId id, Price new_price, Quantity new_quantity) 
         // correctness test by construction rather than by accident.
         order_it->quantity = new_quantity;
         listener_.OnOrderModified(id, new_quantity);
-        EmitLevelUpdate(loc.side, loc.price);
+        // Still holding the level this order lives in -- emit directly
+        // instead of going through a second by-price lookup.
+        listener_.OnBookUpdate(loc.side, loc.price, SumLevel(*level));
         return;
     }
 
@@ -232,8 +242,7 @@ void OrderBook::ModifyOrder(OrderId id, Price new_price, Quantity new_quantity) 
     // priority-preserving case above) does not.
     level->erase(order_it);
     locations_.erase(it);
-    EraseLevelIfEmpty(loc.side, loc.price);
-    EmitLevelUpdate(loc.side, loc.price);
+    PruneAndEmitLevelUpdate(loc.side, loc.price);
 
     AddLimitOrder(id, loc.side, new_price, new_quantity);
 }
@@ -260,8 +269,7 @@ void OrderBook::ReduceRestingQuantity(OrderId id, Quantity amount) {
     const Location loc = it->second;
     LevelQueue* level = LevelFor(loc.side, loc.price);
     assert(level != nullptr);
-    auto order_it = std::find_if(level->begin(), level->end(),
-                                 [id](const RestingOrder& o) { return o.id == id; });
+    auto order_it = FindOrderInLevel(*level, id);
     assert(order_it != level->end());
 
     if (order_it->quantity.units < amount.units) {
@@ -277,9 +285,8 @@ void OrderBook::ReduceRestingQuantity(OrderId id, Quantity amount) {
     if (order_it->quantity.units == 0) {
         level->erase(order_it);
         locations_.erase(it);
-        EraseLevelIfEmpty(loc.side, loc.price);
     }
-    EmitLevelUpdate(loc.side, loc.price);
+    PruneAndEmitLevelUpdate(loc.side, loc.price);
 }
 
 std::optional<Price> OrderBook::BestBid() const {
