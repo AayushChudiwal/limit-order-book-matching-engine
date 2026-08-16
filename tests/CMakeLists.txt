@@ -21,6 +21,7 @@ add_executable(lob_tests
   test_top_levels.cpp
   test_full_book.cpp
   test_fuzz_apply_op.cpp
+  test_fuzz_invariants.cpp
   test_itch_decode.cpp
   test_itch_integrity_checker.cpp
 )
