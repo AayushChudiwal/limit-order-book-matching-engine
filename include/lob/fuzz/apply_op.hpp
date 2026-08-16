@@ -58,11 +58,11 @@ std::int64_t ApplyAddLikeAndMeasure(Engine& engine, FuzzListener& listener, Orde
 }  // namespace detail
 
 // Applies one generated op to one engine, performing exactly the calls a
-// real adapter would -- Replace as SideOf + CancelOrder + AddLimitOrder
-// under the new id, never OrderBook::ModifyOrder (see
-// OrderReplaceViaItchPattern in tests/test_reduce_and_side_of.cpp for
-// why) -- and returns the resulting change in total resting quantity
-// across both sides combined.
+// real adapter would -- Replace through Engine::Replace() (ITCH
+// semantics: new id, always forfeits priority; never OrderBook::
+// ModifyOrder -- see OrderReplaceViaItchPattern in
+// tests/test_reduce_and_side_of.cpp for why) -- and returns the
+// resulting change in total resting quantity across both sides combined.
 //
 // This is the ONE place that knows how a FuzzOp maps onto engine calls:
 // the generator uses it to drive its internal bookkeeping engine, and the
@@ -91,22 +91,28 @@ OpOutcome ApplyOp(Engine& engine, FuzzListener& listener, const FuzzOp& op) {
         }
 
         case FuzzOp::Kind::Replace: {
-            const auto side = engine.SideOf(op.replace_target);
-            if (!side.has_value()) {
-                // No engine calls at all -- mirrors the real adapter
-                // pattern (see itch_snapshot_dump.cpp) and is itself one
-                // of the fuzzer's deliberate pathological cases: replace
-                // of an order that no longer exists.
-                return {0};
-            }
+            // Engine::Replace() is itself a no-op (no listener events at
+            // all) when replace_target doesn't currently rest -- exactly
+            // the "replace of an order that no longer exists" pathological
+            // case -- so all three before-counts naturally yield delta=0
+            // in that case without a separate branch here.
             const std::size_t cancelled_before = listener.cancelled.size();
-            engine.CancelOrder(op.replace_target);
+            const std::size_t fills_before = listener.fills.size();
+            const std::size_t accepted_before = listener.accepted.size();
+
+            engine.Replace(op.replace_target, op.order_id, op.price, op.quantity);
+
             std::int64_t delta = 0;
             if (listener.cancelled.size() > cancelled_before) {
                 delta -= listener.cancelled.back().second.units;
             }
-            delta += detail::ApplyAddLikeAndMeasure(engine, listener, op.order_id, *side, op.price,
-                                                    op.quantity);
+            std::int64_t filled_this_op = 0;
+            for (std::size_t i = fills_before; i < listener.fills.size(); ++i) {
+                filled_this_op += listener.fills[i].quantity.units;
+            }
+            const bool accepted_now = listener.accepted.size() > accepted_before;
+            const std::int64_t rested = accepted_now ? (op.quantity.units - filled_this_op) : 0;
+            delta += rested - filled_this_op;
             return {delta};
         }
 

@@ -172,6 +172,15 @@ void OrderBook::CancelOrder(OrderId id) {
     EmitLevelUpdate(loc.side, loc.price);
 }
 
+void OrderBook::Replace(OrderId old_id, OrderId new_id, Price new_price, Quantity new_quantity) {
+    const auto side = SideOf(old_id);
+    if (!side.has_value()) {
+        return;
+    }
+    CancelOrder(old_id);
+    AddLimitOrder(new_id, *side, new_price, new_quantity);
+}
+
 void OrderBook::ModifyOrder(OrderId id, Price new_price, Quantity new_quantity) {
     auto it = locations_.find(id);
     if (it == locations_.end()) {

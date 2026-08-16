@@ -196,6 +196,39 @@ DifferentialResult RunDifferential(std::span<const FuzzOp> ops) {
                                            " B=" + detail::DescribeFullBook(asks_b))};
         }
 
+        // --- best bid/ask, compared directly -- NOT implied by the
+        // FullBook comparison above. An engine keeping a separate
+        // best-price CACHE (a real, plausible optimization -- see
+        // BuggyOrderBook's own comment on why it has one) that goes stale
+        // reports a wrong BestBid()/BestAsk() while FullBook(), reading
+        // the underlying levels directly, still looks perfectly correct.
+        // This exact gap shipped in an earlier version of this function:
+        // BestBidCacheNotInvalidated went uncaught across 5 seeds and
+        // 3000 ops each until this check was added -- discovered by the
+        // mutation-testing verification this file exists to pass, not by
+        // inspection. Left in as a reminder in the commit history rather
+        // than a silent fix.
+        if (engine_a.BestBid() != engine_b.BestBid()) {
+            return {
+                false,
+                make_divergence(
+                    i,
+                    "best bid differs: A=" +
+                        (engine_a.BestBid() ? std::to_string(engine_a.BestBid()->ticks) : "none") +
+                        " B=" +
+                        (engine_b.BestBid() ? std::to_string(engine_b.BestBid()->ticks) : "none"))};
+        }
+        if (engine_a.BestAsk() != engine_b.BestAsk()) {
+            return {
+                false,
+                make_divergence(
+                    i,
+                    "best ask differs: A=" +
+                        (engine_a.BestAsk() ? std::to_string(engine_a.BestAsk()->ticks) : "none") +
+                        " B=" +
+                        (engine_b.BestAsk() ? std::to_string(engine_b.BestAsk()->ticks) : "none"))};
+        }
+
         // --- single-engine invariants, independently on each ---
         if (const auto v = CheckInvariants(engine_a, expected_total_a); !v.empty()) {
             return {false, make_divergence(i, "engine A invariant violated: " + v[0])};

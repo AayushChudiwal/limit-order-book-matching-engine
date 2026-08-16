@@ -24,6 +24,7 @@ concept EngineUnderTest = requires(E engine, const E const_engine, OrderId id, S
     { engine.AddLimitOrder(id, side, price, quantity) } -> std::same_as<void>;
     { engine.AddMarketOrder(id, side, quantity) } -> std::same_as<void>;
     { engine.CancelOrder(id) } -> std::same_as<void>;
+    { engine.Replace(id, id, price, quantity) } -> std::same_as<void>;
     { engine.ReduceRestingQuantity(id, quantity) } -> std::same_as<void>;
     { const_engine.BestBid() } -> std::same_as<std::optional<Price>>;
     { const_engine.BestAsk() } -> std::same_as<std::optional<Price>>;

@@ -47,6 +47,7 @@ endif()
 # do with ITCH parsing.
 add_library(lob_fuzz
   src/fuzz/generator.cpp
+  src/fuzz/buggy_order_book.cpp
 )
 target_include_directories(lob_fuzz PUBLIC include)
 target_compile_features(lob_fuzz PUBLIC cxx_std_20)

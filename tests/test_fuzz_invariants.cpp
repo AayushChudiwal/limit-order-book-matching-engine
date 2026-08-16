@@ -21,6 +21,7 @@ class FakeEngine {
     void AddLimitOrder(OrderId, Side, Price, Quantity) {}
     void AddMarketOrder(OrderId, Side, Quantity) {}
     void CancelOrder(OrderId) {}
+    void Replace(OrderId, OrderId, Price, Quantity) {}
     void ReduceRestingQuantity(OrderId, Quantity) {}
 
     std::optional<Price> BestBid() const { return best_bid; }

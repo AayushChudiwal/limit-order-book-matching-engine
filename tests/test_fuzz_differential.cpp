@@ -29,6 +29,9 @@ class RejectEverythingEngine {
         listener_.OnOrderRejected(id, RejectReason::InvalidQuantity);
     }
     void CancelOrder(OrderId id) { listener_.OnOrderRejected(id, RejectReason::UnknownOrderId); }
+    void Replace(OrderId old_id, OrderId, Price, Quantity) {
+        listener_.OnOrderRejected(old_id, RejectReason::UnknownOrderId);
+    }
     void ReduceRestingQuantity(OrderId id, Quantity) {
         listener_.OnOrderRejected(id, RejectReason::UnknownOrderId);
     }

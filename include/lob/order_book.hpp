@@ -65,6 +65,23 @@ class OrderBook {
     // the priority rules this enforces.
     void ModifyOrder(OrderId id, Price new_price, Quantity new_quantity);
 
+    // Replaces a resting order under a brand-new id, ALWAYS forfeiting
+    // queue priority -- the ITCH wire-level Order Replace semantics (see
+    // lob/itch/messages.hpp's OrderReplace comment), never Phase 1's
+    // own ModifyOrder above, which preserves priority on a same-price
+    // quantity decrease. A no-op if old_id doesn't currently rest
+    // (mirrors the adapter pattern in itch_snapshot_dump.cpp: nothing to
+    // replace, nothing happens). Implemented as exactly the composition
+    // Phase 2 already proved correct -- SideOf, then CancelOrder, then
+    // AddLimitOrder under new_id -- exposed as one named call rather than
+    // three the caller has to sequence itself. This exists as a first-
+    // class primitive (not just a pattern callers compose) because a real
+    // high-performance engine would have a dedicated Replace fast path to
+    // avoid two separate lookups, which is also where a real "replace
+    // accidentally keeps priority" bug would actually live -- see
+    // lob/fuzz/buggy_order_book.hpp's ReplaceKeepsQueuePriority.
+    void Replace(OrderId old_id, OrderId new_id, Price new_price, Quantity new_quantity);
+
     // Reduces a resting order's quantity by an amount this engine did not
     // itself compute, removing it entirely if that reaches zero -- and,
     // unlike AddLimitOrder/AddMarketOrder, never emits OnFill. A Fill in
