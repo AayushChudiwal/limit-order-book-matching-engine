@@ -78,5 +78,11 @@ add_executable(fuzz_mutation_test
 target_link_libraries(fuzz_mutation_test PRIVATE lob_fuzz)
 target_compile_options(fuzz_mutation_test PRIVATE -Wall -Wextra -Wpedantic)
 
+add_executable(fuzz_soak
+  tools/fuzz_soak.cpp
+)
+target_link_libraries(fuzz_soak PRIVATE lob_fuzz)
+target_compile_options(fuzz_soak PRIVATE -Wall -Wextra -Wpedantic)
+
 enable_testing()
 add_subdirectory(tests)
