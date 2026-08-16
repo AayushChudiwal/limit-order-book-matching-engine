@@ -39,3 +39,25 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1,halt_on_error=1
         run: ctest --test-dir build-san --output-on-failure
+
+  fuzz-mutation-test:
+    name: Phase 3 fuzz -- mutation testing (fast, fixed seeds)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release -j --target fuzz_mutation_test
+
+      # Fixed seeds (1..20 per bug, hardcoded in the tool), so this is
+      # exactly as deterministic and fast as any other test here (~1.5s) --
+      # not the long randomized sweep, which is fuzz-nightly's job below.
+      # Fails the build if ANY of the 7 injected bugs goes uncaught in ANY
+      # of its 20 seeds: this is what keeps docs/fuzz_mutation_testing.md's
+      # claim ("140/140 caught") from silently rotting as the harness or
+      # engine change.
+      - name: Run mutation test (must catch all 7 bugs in every seed)
+        run: ./build/fuzz_mutation_test

@@ -1,0 +1,44 @@
+name: Fuzz nightly
+
+# The long, randomized-seed soak job -- separate from ci.yml deliberately:
+# this runs at a scale (hundreds of seeds, tens of thousands of ops each)
+# that would make every push wait minutes for something that doesn't need
+# to be fast, only thorough. See tools/fuzz_soak.cpp for what it actually
+# checks (property invariants + determinism, since Phase 5's second real
+# engine doesn't exist yet for a true differential sweep).
+on:
+  schedule:
+    - cron: '0 8 * * *' # daily, 08:00 UTC
+  workflow_dispatch: {} # manual trigger, e.g. to re-run after a fix
+
+jobs:
+  soak:
+    name: Long randomized-seed soak
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release -j --target fuzz_soak
+
+      # A fresh, still fully-reproducible seed range every run: offset by
+      # (run number * 500) so consecutive scheduled runs explore new
+      # ground instead of re-checking the same 500 seeds forever, while
+      # `./fuzz_soak <offset> 500 30000` stays exactly reproducible if
+      # this specific run ever needs to be repeated locally.
+      - name: Run long soak (property invariants + determinism, many seeds)
+        run: |
+          OFFSET=$(( ${{ github.run_number }} * 500 ))
+          echo "seed offset: $OFFSET"
+          ./build/fuzz_soak "$OFFSET" 500 30000
+
+      # If this ever fails: the failing seed(s) are in the job log above.
+      # Per the brief, any newly discovered failing seed should be
+      # shrunk (via the same Shrink() used in fuzz_mutation_test /
+      # test_fuzz_shrinker.cpp) and committed as a permanent regression
+      # test in tests/test_fuzz_shrunk_regressions.cpp -- this job's only
+      # responsibility is to find it and fail loudly, not to auto-commit
+      # anything on your behalf.
