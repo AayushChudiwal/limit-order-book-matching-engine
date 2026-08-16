@@ -110,5 +110,11 @@ add_executable(bench_matching_engine
 target_link_libraries(bench_matching_engine PRIVATE lob_bench lob_engine lob_itch)
 target_compile_options(bench_matching_engine PRIVATE -Wall -Wextra -Wpedantic)
 
+add_executable(cache_line_probe
+  tools/cache_line_probe.cpp
+)
+target_link_libraries(cache_line_probe PRIVATE lob_bench)
+target_compile_options(cache_line_probe PRIVATE -Wall -Wextra -Wpedantic)
+
 enable_testing()
 add_subdirectory(tests)
