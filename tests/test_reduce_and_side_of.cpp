@@ -55,6 +55,34 @@ TEST(ReduceRestingQuantity, OfAnUnknownOrderIdIsRejectedCleanly) {
     EXPECT_EQ(listener.rejected[0].second, RejectReason::UnknownOrderId);
 }
 
+TEST(ReduceRestingQuantity, ZeroAmountIsRejected) {
+    RecordingListener listener;
+    OrderBook book(listener);
+
+    book.AddLimitOrder(OrderId{1}, Side::Sell, Price{100}, Quantity{50});
+    book.ReduceRestingQuantity(OrderId{1}, Quantity{0});
+
+    ASSERT_EQ(listener.rejected.size(), 1u);
+    EXPECT_EQ(listener.rejected[0].second, RejectReason::InvalidQuantity);
+    ASSERT_TRUE(book.BestAsk().has_value());
+}
+
+TEST(ReduceRestingQuantity, NegativeAmountIsRejectedRatherThanIncreasingTheOrder) {
+    RecordingListener listener;
+    OrderBook book(listener);
+
+    book.AddLimitOrder(OrderId{1}, Side::Sell, Price{100}, Quantity{50});
+    book.ReduceRestingQuantity(OrderId{1}, Quantity{-10});
+
+    ASSERT_EQ(listener.rejected.size(), 1u);
+    EXPECT_EQ(listener.rejected[0].second, RejectReason::InvalidQuantity);
+    // Must still be exactly 50 -- a negative amount subtracting-below-zero
+    // would otherwise silently grow it instead.
+    const auto levels = book.TopLevels(Side::Sell, 1);
+    ASSERT_EQ(levels.size(), 1u);
+    EXPECT_EQ(levels[0].total_quantity, Quantity{50});
+}
+
 TEST(ReduceRestingQuantity, ReducingByMoreThanRemainsIsRejectedNotAppliedPartially) {
     RecordingListener listener;
     OrderBook book(listener);

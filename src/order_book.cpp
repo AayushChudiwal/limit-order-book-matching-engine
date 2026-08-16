@@ -235,6 +235,19 @@ void OrderBook::ReduceRestingQuantity(OrderId id, Quantity amount) {
         listener_.OnOrderRejected(id, RejectReason::UnknownOrderId);
         return;
     }
+    if (amount.units <= 0) {
+        // Without this check a negative amount would subtract a negative
+        // number below and silently INCREASE the resting order's quantity
+        // instead of being rejected -- unreachable from real ITCH data
+        // (executed/canceled shares are unsigned on the wire), but this
+        // engine's Quantity is a signed type, so nothing stops a caller
+        // from constructing one. Caught by Phase 3's fuzzer design work,
+        // not by any real feed exercising it: a good illustration of why
+        // the fuzzer's "zero and negative quantity" pathological case
+        // matters even for operations no wire format can naturally send.
+        listener_.OnOrderRejected(id, RejectReason::InvalidQuantity);
+        return;
+    }
     const Location loc = it->second;
     LevelQueue* level = LevelFor(loc.side, loc.price);
     assert(level != nullptr);
