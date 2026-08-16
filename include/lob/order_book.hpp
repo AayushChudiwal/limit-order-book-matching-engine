@@ -16,6 +16,16 @@ struct PriceLevel {
     Quantity total_quantity;
 };
 
+struct RestingOrderView {
+    OrderId id;
+    Quantity quantity;
+};
+
+struct FullPriceLevel {
+    Price price;
+    std::vector<RestingOrderView> orders;  // FIFO order: front() is next to trade
+};
+
 // Deliberately naive, obviously-correct reference implementation.
 //
 // Price levels live in a std::map (a balanced tree) so that price ordering
@@ -81,6 +91,18 @@ class OrderBook {
     // needs more than BestBid/BestAsk, so this is a read-only reporting
     // query, not a hot-path primitive.
     [[nodiscard]] std::vector<PriceLevel> TopLevels(Side side, int depth) const;
+
+    // Every price level on one side, no depth cap, with every individual
+    // resting order at each level in FIFO order -- not just the aggregated
+    // quantity TopLevels() reports. This is what Phase 3's differential
+    // fuzzer needs and TopLevels() deliberately doesn't provide: two
+    // engines can agree on every level's total quantity while disagreeing
+    // about which orders make it up or what order they're queued in (a
+    // FIFO-vs-LIFO bug, for instance, is invisible to aggregated
+    // quantities but not to this). Like TopLevels(), this is a read-only
+    // reporting query that exists for external validation, not something
+    // any internal engine logic calls.
+    [[nodiscard]] std::vector<FullPriceLevel> FullBook(Side side) const;
 
     // Which side a resting order is on. ITCH's Order Replace message omits
     // side (the spec is explicit: it can't change, so consumers must

@@ -290,4 +290,24 @@ std::vector<PriceLevel> OrderBook::TopLevels(Side side, int depth) const {
     return levels;
 }
 
+std::vector<FullPriceLevel> OrderBook::FullBook(Side side) const {
+    std::vector<FullPriceLevel> levels;
+    auto append = [&levels](const auto& level_map) {
+        for (const auto& [price, queue] : level_map) {
+            FullPriceLevel level{price, {}};
+            level.orders.reserve(queue.size());
+            for (const auto& order : queue) {
+                level.orders.push_back({order.id, order.quantity});
+            }
+            levels.push_back(std::move(level));
+        }
+    };
+    if (side == Side::Buy) {
+        append(bids_);
+    } else {
+        append(asks_);
+    }
+    return levels;
+}
+
 }  // namespace lob
