@@ -60,6 +60,17 @@ if(LOB_ENABLE_SANITIZERS)
   target_link_options(lob_fuzz PUBLIC -fsanitize=address,undefined)
 endif()
 
+# Phase 4's PMU-based benchmarking. macOS/Apple Silicon only (dlopen's
+# private frameworks that don't exist on Linux) -- deliberately not
+# behind an option/ifdef here since this whole project targets this one
+# platform; see docs/benchmark_methodology.md for why.
+add_library(lob_bench
+  src/bench/pmu.cpp
+)
+target_include_directories(lob_bench PUBLIC include)
+target_compile_features(lob_bench PUBLIC cxx_std_20)
+target_compile_options(lob_bench PRIVATE -Wall -Wextra -Wpedantic)
+
 add_executable(itch_replay
   tools/itch_replay.cpp
 )
@@ -83,6 +94,12 @@ add_executable(fuzz_soak
 )
 target_link_libraries(fuzz_soak PRIVATE lob_fuzz)
 target_compile_options(fuzz_soak PRIVATE -Wall -Wextra -Wpedantic)
+
+add_executable(pmu_validate
+  tools/pmu_validate.cpp
+)
+target_link_libraries(pmu_validate PRIVATE lob_bench)
+target_compile_options(pmu_validate PRIVATE -Wall -Wextra -Wpedantic)
 
 enable_testing()
 add_subdirectory(tests)
