@@ -24,6 +24,7 @@ add_executable(lob_tests
   test_fuzz_invariants.cpp
   test_fuzz_id_pool.cpp
   test_fuzz_generator.cpp
+  test_fuzz_differential.cpp
   test_itch_decode.cpp
   test_itch_integrity_checker.cpp
 )
