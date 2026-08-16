@@ -26,6 +26,8 @@ add_executable(lob_tests
   test_fuzz_generator.cpp
   test_fuzz_differential.cpp
   test_fuzz_buggy_order_book.cpp
+  test_fuzz_shrinker.cpp
+  test_fuzz_shrunk_regressions.cpp
   test_itch_decode.cpp
   test_itch_integrity_checker.cpp
 )
