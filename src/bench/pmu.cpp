@@ -218,6 +218,7 @@ PmuCounters::PmuCounters() {
     const std::uint32_t fixed_count = api.get_counter_count(kKpcClassFixedMask);
     counter_buf_size_ =
         fixed_count + static_cast<std::size_t>(api.get_counter_count(kKpcClassConfigurableMask));
+    read_buf_.assign(counter_buf_size_, 0);
 
     // Configurable events were added in this order: branch mispredicts
     // (if available), then L1D cache refills (if available) -- kpc_map[i]
@@ -268,21 +269,24 @@ PmuCounters::~PmuCounters() {
 }
 
 PmuSnapshot PmuCounters::Read() const {
-    std::vector<std::uint64_t> buf(counter_buf_size_, 0);
-    if (Api().get_thread_counters(0, static_cast<std::uint32_t>(buf.size()), buf.data()) != 0) {
+    // read_buf_ is sized once in the constructor and reused here -- no
+    // per-call allocation. See its declaration in pmu.hpp for why that
+    // matters.
+    if (Api().get_thread_counters(0, static_cast<std::uint32_t>(read_buf_.size()),
+                                  read_buf_.data()) != 0) {
         throw std::runtime_error("PmuCounters::Read: kpc_get_thread_counters failed");
     }
 
     PmuSnapshot snap;
-    snap.cycles = buf.size() > 0 ? buf[0] : 0;
-    snap.instructions = buf.size() > 1 ? buf[1] : 0;
+    snap.cycles = read_buf_.size() > 0 ? read_buf_[0] : 0;
+    snap.instructions = read_buf_.size() > 1 ? read_buf_[1] : 0;
     if (branch_mispredicts_index_ >= 0 &&
-        static_cast<std::size_t>(branch_mispredicts_index_) < buf.size()) {
-        snap.branch_mispredicts = buf[static_cast<std::size_t>(branch_mispredicts_index_)];
+        static_cast<std::size_t>(branch_mispredicts_index_) < read_buf_.size()) {
+        snap.branch_mispredicts = read_buf_[static_cast<std::size_t>(branch_mispredicts_index_)];
     }
     if (l1d_cache_refills_index_ >= 0 &&
-        static_cast<std::size_t>(l1d_cache_refills_index_) < buf.size()) {
-        snap.l1d_cache_refills = buf[static_cast<std::size_t>(l1d_cache_refills_index_)];
+        static_cast<std::size_t>(l1d_cache_refills_index_) < read_buf_.size()) {
+        snap.l1d_cache_refills = read_buf_[static_cast<std::size_t>(l1d_cache_refills_index_)];
     }
     return snap;
 }

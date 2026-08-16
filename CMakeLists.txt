@@ -104,5 +104,11 @@ add_executable(pmu_validate
 target_link_libraries(pmu_validate PRIVATE lob_bench)
 target_compile_options(pmu_validate PRIVATE -Wall -Wextra -Wpedantic)
 
+add_executable(bench_matching_engine
+  tools/bench_matching_engine.cpp
+)
+target_link_libraries(bench_matching_engine PRIVATE lob_bench lob_engine lob_itch)
+target_compile_options(bench_matching_engine PRIVATE -Wall -Wextra -Wpedantic)
+
 enable_testing()
 add_subdirectory(tests)

@@ -4,6 +4,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace lob::bench {
 
@@ -77,6 +78,18 @@ class PmuCounters {
     int branch_mispredicts_index_ = -1;
     int l1d_cache_refills_index_ = -1;
     std::size_t counter_buf_size_ = 0;
+
+    // Read()'s scratch buffer, sized once in the constructor and reused on
+    // every call -- the original version allocated a fresh
+    // std::vector<uint64_t> per Read(), which measurably dominated Read()'s
+    // own cost (~2688 cycles median on this M4 for two back-to-back
+    // Read() calls with nothing between them -- see the discussion in
+    // docs/benchmark_methodology.md on why per-operation PMU reads were
+    // dropped in favor of mach_absolute_time for that reason). `mutable`
+    // because Read() is logically const from the caller's point of view
+    // (it doesn't change what PmuCounters reports) even though it reuses
+    // internal storage.
+    mutable std::vector<std::uint64_t> read_buf_;
 };
 
 }  // namespace lob::bench
