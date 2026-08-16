@@ -41,6 +41,23 @@ if(LOB_ENABLE_SANITIZERS)
   target_link_options(lob_itch PUBLIC -fsanitize=address,undefined)
 endif()
 
+# Phase 3's differential-fuzzing generator. Depends on lob_engine (its
+# internal bookkeeping engine is the reference OrderBook) but not lob_itch
+# -- the fuzzer generates its own synthetic op streams and has nothing to
+# do with ITCH parsing.
+add_library(lob_fuzz
+  src/fuzz/generator.cpp
+)
+target_include_directories(lob_fuzz PUBLIC include)
+target_compile_features(lob_fuzz PUBLIC cxx_std_20)
+target_compile_options(lob_fuzz PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(lob_fuzz PUBLIC lob_engine)
+
+if(LOB_ENABLE_SANITIZERS)
+  target_compile_options(lob_fuzz PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(lob_fuzz PUBLIC -fsanitize=address,undefined)
+endif()
+
 add_executable(itch_replay
   tools/itch_replay.cpp
 )

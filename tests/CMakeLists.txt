@@ -23,10 +23,11 @@ add_executable(lob_tests
   test_fuzz_apply_op.cpp
   test_fuzz_invariants.cpp
   test_fuzz_id_pool.cpp
+  test_fuzz_generator.cpp
   test_itch_decode.cpp
   test_itch_integrity_checker.cpp
 )
-target_link_libraries(lob_tests PRIVATE lob_engine lob_itch GTest::gtest_main)
+target_link_libraries(lob_tests PRIVATE lob_itch lob_fuzz GTest::gtest_main)
 target_compile_options(lob_tests PRIVATE -Wall -Wextra -Wpedantic)
 
 if(LOB_ENABLE_SANITIZERS)
