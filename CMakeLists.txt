@@ -72,5 +72,11 @@ add_executable(itch_snapshot_dump
 target_link_libraries(itch_snapshot_dump PRIVATE lob_engine lob_itch)
 target_compile_options(itch_snapshot_dump PRIVATE -Wall -Wextra -Wpedantic)
 
+add_executable(fuzz_mutation_test
+  tools/fuzz_mutation_test.cpp
+)
+target_link_libraries(fuzz_mutation_test PRIVATE lob_fuzz)
+target_compile_options(fuzz_mutation_test PRIVATE -Wall -Wextra -Wpedantic)
+
 enable_testing()
 add_subdirectory(tests)
