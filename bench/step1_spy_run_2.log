@@ -1,6 +1,6 @@
 === bench_matching_engine ===
 CPU: Apple M4
-calibrated frequency this run: 2.088 GHz
+calibrated frequency this run: 4.380 GHz
 target symbol: SPY (stock_locate=7397)
 warmup: 45911 messages replayed, resting depth reached 133 (target 3000, NOT REACHED) -- stopped due to: Add reserve for the timed slice exhausted, (0 Replace with unknown original side, skipped)
 Adds used in warmup: 20886 of 29837 total (reserve for Add slice: 8951)
@@ -9,19 +9,19 @@ real Replace price deltas collected (whole file, this symbol): 1598
 resting orders in warmed book: 133 across 110 price levels (1.21 orders/level)
 
 --- results (mean cycles/op, single aggregate bracket per variant) ---
-  Add_real           ops=    8951  mean=   259.1 cycles ( 124.1 ns)  
-  Add_widened        ops=    8951  mean=   569.8 cycles ( 272.9 ns)  
+  Add_real           ops=    8951  mean=   258.6 cycles (  59.0 ns)  
+  Add_widened        ops=    8951  mean=   535.9 cycles ( 122.4 ns)  
   [Cancel_traversal   pool=133 ops/round x 226 rounds]
-  Cancel_traversal   ops=   30058  mean=   252.5 cycles ( 121.0 ns)  
+  Cancel_traversal   ops=   30058  mean=   229.0 cycles (  52.3 ns)  
   [Cancel_shuffled    pool=133 ops/round x 226 rounds]
-  Cancel_shuffled    ops=   30058  mean=   260.1 cycles ( 124.6 ns)  
+  Cancel_shuffled    ops=   30058  mean=   231.6 cycles (  52.9 ns)  
   [Reduce_traversal   pool=133 ops/round x 226 rounds]
-  Reduce_traversal   ops=   30058  mean=    79.3 cycles (  38.0 ns)  
+  Reduce_traversal   ops=   30058  mean=    81.3 cycles (  18.6 ns)  
   [Reduce_shuffled    pool=133 ops/round x 226 rounds]
-  Reduce_shuffled    ops=   30058  mean=    85.0 cycles (  40.7 ns)  
+  Reduce_shuffled    ops=   30058  mean=    85.3 cycles (  19.5 ns)  
   [Replace_traversal  pool=133 ops/round x 226 rounds]
-  Replace_traversal  ops=   30058  mean=   638.6 cycles ( 305.9 ns)  
+  Replace_traversal  ops=   30058  mean=   656.7 cycles ( 149.9 ns)  
   [Replace_shuffled   pool=133 ops/round x 226 rounds]
-  Replace_shuffled   ops=   30058  mean=   614.0 cycles ( 294.1 ns)  
+  Replace_shuffled   ops=   30058  mean=   632.3 cycles ( 144.4 ns)  
 
 wrote bench/step1_spy_run_2.csv

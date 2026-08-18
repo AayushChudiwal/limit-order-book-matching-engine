@@ -1,258 +1,236 @@
-# Phase 5 step 1 results: correctness confirmed, performance benchmark invalid
+# Phase 5 step 1 results: correctness confirmed, performance measured and mostly explained
 
 This is the required N=10 baseline comparison for commit `e2e0422`
 ("Phase 5 step 1: hot-path hygiene -- eliminate redundant level lookups"),
-plus the two questions left open by that commit: whether the
-`OnOrderCancelled`/prune reordering is truly unobservable, and what
-mechanism explains each variant's delta.
+covering the same three questions as before, now against a valid
+measurement: the delta table against the Phase 4 baseline, mechanism
+attribution for each variant, and the `OnOrderCancelled`/prune
+reordering question. An earlier version of this document was written
+against a run captured on battery power with Low Power Mode on
+(calibrated ~2.088 GHz, an E-core-range clock); that data has been
+superseded by the corrected run below and is not cited for any
+magnitude claim.
 
-**Headline: the 10-run comparison below cannot be trusted as evidence of
-a performance change. It was measured on a different CPU clock domain
-than the Phase 4 baseline it's being compared against.** Correctness is
-fully confirmed independent of that problem. Performance is not yet
-validly measured. Both are stated plainly below rather than one being
-allowed to imply the other.
+## The re-run is valid
 
-## The benchmark is confounded, not just noisy
-
-Every one of the 10 `step1_spy_run_*.log` files reports **`calibrated
-frequency this run: 2.087-2.088 GHz`**. The Phase 4 baseline's 10 runs
-(`docs/benchmark_methodology.md`) ranged **4.376-4.439 GHz**. That's not
-run-to-run variance -- the baseline's own 10 runs varied by ~1.4%
-(real thermal/DVFS drift, as documented there); the step1 runs vary by
-**0.05%** across all 10 of them, which is far too tight to be thermal
-noise and is instead the signature of every run landing on the same
-clock domain throughout.
-
-This machine, checked directly:
-
-```
-$ pmset -g batt
-Now drawing from 'Battery Power'
- -InternalBattery-0; 25%; discharging
-$ pmset -g | grep lowpowermode
- lowpowermode         1
-```
-
-On battery, with **Low Power Mode on**. `docs/cache_hierarchy_m4.md`
-already documents that this project's `SetInteractiveQos()` sets
-`QOS_CLASS_USER_INTERACTIVE` specifically to bias scheduling onto
-P-cores, and that this is a *hint*, not a guarantee. Low Power Mode is
-known to cap or exclude P-cores regardless of that hint. `2.088 GHz` is
-far below this M4's P-core range (the baseline's own 4.4 GHz) and
-consistent with an E-core clock. `bench_matching_engine` calls
-`SetInteractiveQos()` and logs whether it *failed* (it didn't -- no
-warning line appears in any step1 log) but has no check on whether the
-resulting calibrated frequency is actually in the expected P-core band,
-so this ran to completion without surfacing the problem.
-
-**Why this specifically corrupts a cross-session cycles/op comparison,
-not just wall-clock time:** the PMU counts real elapsed cycles, so a
-cycle is still a cycle regardless of clock speed -- but memory-latency
-stalls (a `std::map` node's cache miss, a hash bucket lookup) are fixed
-in *nanoseconds*, not cycles. At a lower clock, that same fixed-ns
-stall consumes fewer cycles. So any operation whose cost is
-memory-latency-dominated will show *artificially fewer* cycles/op when
-measured at 2.1 GHz than at 4.4 GHz, independent of any code change --
-while an operation whose cost is compute-dominated (loop iterations,
-arithmetic) won't shift nearly as much, since its cost scales with
-instruction count, not wall-clock stall time. That is exactly the
-pattern in the raw numbers below: the two variants with the least
-memory-chasing (`Reduce_*`, a short deque scan and a subtraction) show
-~0% delta, while `Add_real`, `Cancel_*`, and `Replace_*` (all dominated
-by `std::map`/`unordered_map` traversal) show the largest deltas. That
-correlation is what a clock-domain confound predicts; it is also
-consistent with (but does not distinguish from) the code-level
-hygiene win the commit intended. The two can't be separated with this
-data.
-
-## The raw numbers, reported as provisional
-
-Setup was verified identical across all 10 step1 runs from each log
-(same as the baseline's own methodology requires): 45,911 warmup
+All 10 corrected `step1_spy_run_*.log` files report calibrated
+frequencies in **4.296-4.421 GHz**, matching the Phase 4 baseline's own
+4.376-4.439 GHz range (P-core, no throttling). Setup is identical to
+both the original step1 attempt and the baseline: 45,911 warmup
 messages, resting depth 133 / 110 levels, 20,886 of 29,837 Adds used in
 warmup (8,951 reserved for the Add slice), 30,058 ops per
-Cancel/Reduce/Replace variant (226 cycling rounds). Only the clock
-domain differs from the baseline session -- the workload itself is a
-clean match.
+Cancel/Reduce/Replace variant (226 cycling rounds), verified from every
+log rather than assumed.
 
-| Variant | step1 mean (c) | min | max | CoV% | baseline mean (c) | delta % | min-detectable % | verdict |
-|---|---:|---:|---:|---:|---:|---:|---:|---|
-| Add_real | 262.79 | 254.40 | 273.62 | 2.26 | 313.6 | 16.20 | 2.12 | outside noise threshold, **but confound cannot be excluded** |
-| Add_widened | 579.90 | 557.91 | 600.04 | 2.48 | 608.7 | 4.73 | 2.07 | outside noise threshold, **but confound cannot be excluded** |
-| Cancel_traversal | 248.36 | 233.80 | 257.70 | 2.84 | 254.9 | 2.57 | 5.31 | within noise |
-| Cancel_shuffled | 253.82 | 234.42 | 265.07 | 3.44 | 258.0 | 1.62 | 5.00 | within noise |
-| Reduce_traversal | 79.44 | 77.00 | 82.82 | 2.54 | 78.3 | -1.45 | 1.16 | outside noise threshold (slightly **slower**) |
-| Reduce_shuffled | 83.90 | 82.82 | 85.03 | 0.98 | 83.6 | -0.36 | 1.24 | within noise |
-| Replace_traversal | 638.11 | 629.62 | 644.46 | 0.72 | 703.5 | 9.30 | 4.09 | outside noise threshold, **but confound cannot be excluded** |
-| Replace_shuffled | 614.38 | 604.95 | 620.99 | 0.81 | 681.8 | 9.89 | 3.33 | outside noise threshold, **but confound cannot be excluded** |
+**Residual clock gap, checked rather than ignored:** the corrected
+run's mean frequency is 4.336 GHz against the baseline's 4.406 GHz
+mean -- a **1.58% residual gap**, step1 still very slightly the lower
+clock of the two. Given the confound mechanism identified in the
+invalidated run (lower clock reduces the cycle cost of fixed-ns memory
+stalls), this residual gap could in principle still nudge memory-bound
+variants toward looking slightly faster than they truly are. Three
+reasons this doesn't change any conclusion here:
 
-(`delta %` = `(baseline_mean - step1_mean) / baseline_mean * 100`;
-positive = step1 faster. `min-detectable %` = `0.894 * baseline CoV%`,
-per the Phase 4 methodology's own N=10-vs-N=10 threshold.)
+1. **The direction test.** The original (invalid, ~53%-lower-clock)
+   run measured Add_real's delta at 16.20%. This corrected run, at only
+   a 1.58% lower clock than baseline, measures Add_real's delta at
+   **19.84% -- larger, not smaller.** If clock-domain difference were
+   the dominant driver of Add's delta, the far more extreme clock drop
+   should have produced the larger number, not the smaller one. It
+   didn't. That's evidence the code-level win is the real effect and
+   the E-core run, if anything, *understated* it (plausibly because
+   E-cores also carry smaller L1/L2 caches per
+   `docs/cache_hierarchy_m4.md`, adding extra cache-miss overhead that
+   partially offset the lookup-elimination benefit -- a different
+   confound working in the opposite direction, not a clean single-variable
+   comparison either way).
+2. **The margin test.** Every variant classified SIGNIFICANT below
+   clears its own noise threshold by at least 1.49x, most by far more
+   (Add_real at 9.36x, Add_widened at 5.96x). A 1.58% clock gap,
+   even under the (already-contradicted) assumption that it inflates
+   deltas linearly, cannot plausibly account for a variant losing
+   33%+ of its measured delta -- the amount needed to push the closest
+   case (Cancel_traversal, 1.49x) back into its noise band.
+3. **The direction-of-bias test on the one regression.** If the
+   residual 1.58% gap biases anything, it biases *toward* step1 looking
+   faster (lower clock = fewer cycles for the same fixed-ns memory
+   stall). `Reduce_traversal` is the one variant that measures *slower*
+   in step1 (-2.17%). A bias that would make step1 look artificially
+   faster cannot be the explanation for a variant that instead measures
+   artificially slower -- if anything this makes that regression more
+   credible, not less.
 
-Every variant that clears the noise threshold is one dominated by
-map/hash traversal -- exactly the variants the clock-domain confound
-would inflate. Nothing here should be read as "Add_real got 16%
-faster." `Reduce_traversal`'s small apparent regression (-1.45%, just
-outside its own tight 1.16% threshold) is also flagged rather than
-waved off -- see the mechanism section below for why near-zero-to-slightly-negative
-is exactly what the code change predicts for this variant regardless of
-clock domain.
+**Conclusion: the ~1-2% residual clock gap is not large enough to move
+any variant's classification, and where it could theoretically bias a
+result, it argues against rather than for the two most interesting
+findings below (Add's large win, Reduce's small regression).**
 
-## What to do before Phase 5 step 2
+## The numbers
 
-1. Re-run the same `for i in $(seq 1 10); do sudo ./build/bench_matching_engine ...; done`
-   loop on AC power with Low Power Mode off, and confirm each log's
-   calibrated frequency lands in the ~4.3-4.5 GHz band (matching the
-   baseline) before trusting any delta.
-2. Consider adding a sanity check to `bench_matching_engine` (or
-   `CalibrateGigahertz`'s caller) that warns or aborts if the calibrated
-   frequency falls well outside the expected P-core band -- this
-   confound produced a complete, clean-looking, fully-consistent 10-run
-   CSV set with no error, warning, or `[MIGRATED]` flag anywhere. Nothing
-   in the current instrumentation would have caught this without manually
-   reading the calibration line in each log.
-3. Until then, this step's performance claim is **null**, not negative
-   and not positive.
+| Variant | step1 mean (c) | min | max | CoV% | baseline mean (c) | delta % | min-detectable % | margin (x threshold) | verdict |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| Add_real | 251.38 | 245.25 | 272.43 | 3.34 | 313.6 | 19.84 | 2.12 | 9.36x | SIGNIFICANT |
+| Add_widened | 533.72 | 505.09 | 548.36 | 2.18 | 608.7 | 12.32 | 2.07 | 5.96x | SIGNIFICANT |
+| Cancel_traversal | 234.76 | 228.97 | 243.05 | 1.98 | 254.9 | 7.90 | 5.31 | 1.49x | SIGNIFICANT |
+| Cancel_shuffled | 238.08 | 231.51 | 244.62 | 1.95 | 258.0 | 7.72 | 5.00 | 1.54x | SIGNIFICANT |
+| Reduce_traversal | 80.00 | 78.23 | 81.30 | 1.25 | 78.3 | -2.17 | 1.16 | 1.87x | SIGNIFICANT (slower) |
+| Reduce_shuffled | 84.22 | 82.47 | 85.89 | 1.39 | 83.6 | -0.75 | 1.24 | 0.60x | WITHIN NOISE |
+| Replace_traversal | 638.91 | 626.05 | 664.81 | 2.19 | 703.5 | 9.18 | 4.09 | 2.24x | SIGNIFICANT |
+| Replace_shuffled | 617.72 | 606.85 | 636.25 | 1.95 | 681.8 | 9.40 | 3.33 | 2.82x | SIGNIFICANT |
 
-## Mechanism attribution (code-level, holds regardless of the clock-domain question)
+(`delta %` = `(baseline_mean - step1_mean) / baseline_mean * 100`,
+positive = step1 faster; `min-detectable %` = `0.894 * baseline CoV%`
+per the Phase 4 methodology's own N=10-vs-N=10 threshold; `margin` =
+`|delta%| / min-detectable%`, how many multiples of the noise floor the
+result clears.)
 
-The *ranking* between variants is explainable from the diff itself, and
-this part doesn't depend on resolving the confound above -- it's about
-which of the three changes touches which code path, not about the
-absolute magnitude.
+Six of eight variants are real, measurable wins, ranging from Cancel's
+modest ~7.7-7.9% to Add_real's ~19.8%. `Reduce_shuffled` is genuinely
+within noise. `Reduce_traversal` is real but in the wrong direction --
+addressed below, since it's the one result that doesn't fit the
+mechanism story cleanly.
 
-**`Add_real`/`Add_widened` -- only `RestOrder`'s held-reference change
-applies.** `AddLimitOrder` calls `RestOrder` when it doesn't fully
-match, and `RestOrder` is the *only* one of the three step-1 changes
-that touches this path -- `PruneAndEmitLevelUpdate` is Cancel/Reduce/
-price-changing-Modify only, and `FindOrderInLevel` is Remove/Modify/
-Reduce only, neither reachable from a fresh Add. Before: `bids_[price]`
-(one tree traversal, insert-or-find) then `EmitLevelUpdate` calling
-`LevelFor` (`bids_.find(price)`, a **second, fully redundant** tree
-traversal for the same key). After: one traversal, level reference held
-and reused. That's a 2-to-1 reduction in `std::map` traversals on every
-single Add that rests -- the largest structural cut of any of the three
-changes, on the path with the fewest ops per call, so it should show the
-largest proportional effect. It does, in both this data and (pending
-re-verification) presumably a clean re-run.
+## Mechanism attribution, checked against the corrected data
 
-**`Cancel_traversal`/`Cancel_shuffled` -- `PruneAndEmitLevelUpdate`
-collapses 3 map finds into 2.** Old `CancelOrder`: `RemoveFromLevel`'s
-`LevelFor` (find #1) + `EraseLevelIfEmpty`'s own find (find #2) +
-`EmitLevelUpdate`'s `LevelFor` (find #3) = 3 finds. New: `LevelFor`
-(find #1) + `PruneAndEmitLevelUpdate` (find #2) = 2 finds -- a 33%
-cut, smaller than Add's 50% cut, and further diluted by everything else
-Cancel does (a `locations_` erase, a deque erase via `FindOrderInLevel`,
-two listener calls) that this change doesn't touch. Consistent with
-the smallest resolvable win of the three memory-bound variants -- and
-in this data it doesn't even clear its own noise threshold.
+**`Add_real`/`Add_widened` -- confirmed, and larger than first
+measured.** `RestOrder` is the only one of the three step-1 changes
+reachable from a resting Add, and it cuts the map traversal count on
+that path from 2 (`bids_[price]` insert-or-find, then a second,
+fully redundant `LevelFor` inside the old `EmitLevelUpdate`) to 1
+(the held reference is reused directly). The largest structural cut of
+the three changes, on the path with the fewest total ops -- correctly
+predicted to be the largest proportional win, and at 19.84% /
+12.32% it's the largest of any variant by a wide margin.
 
-**`Reduce_traversal`/`Reduce_shuffled` -- no change in map-find count on
-the common path.** This is the one that needed tracing carefully because
-it's not obvious from the summary in the commit message. Old
-`ReduceRestingQuantity`: `LevelFor` (find #1, always) +
-conditionally `EraseLevelIfEmpty` (find #2, **only if the reduce
-exhausts the order to zero**) + `EmitLevelUpdate` (find #3, always).
-New: `LevelFor` (find #1, always) + `PruneAndEmitLevelUpdate` (find #2,
-always). **In the common case where a Reduce doesn't fully exhaust the
-order** (a partial reduce, which is most of what this variant drives),
-old had exactly 2 finds (`LevelFor` + `EmitLevelUpdate`) and new still
-has exactly 2 (`LevelFor` + `PruneAndEmitLevelUpdate`) -- zero
-reduction. Only the minority case (reduce-to-zero) goes from 3 finds to
-2. This is precisely why Reduce shows ~0% (and a slightly negative
-delta on `_traversal`, well within what noise plus
-`PruneAndEmitLevelUpdate`'s extra branch/assert overhead on the
-non-exhausting path could produce) while every other variant shows a
-measurable-or-larger shift: it's the one variant where the "redundant
-lookup" being eliminated wasn't actually being paid on the common path
-before.
+**`Cancel_traversal`/`Cancel_shuffled` -- confirmed, in the predicted
+direction and now clearly outside noise.** `PruneAndEmitLevelUpdate`
+collapses `CancelOrder`'s 3 map finds (`RemoveFromLevel`'s `LevelFor` +
+`EraseLevelIfEmpty`'s own find + `EmitLevelUpdate`'s `LevelFor`) to 2.
+Smaller cut than Add's (33% vs 50% of finds removed), diluted further
+by everything else Cancel does that this change doesn't touch
+(`locations_` erase, a deque erase). Lands at ~7.7-7.9% -- smaller
+than Add as predicted, and (unlike in the invalidated run) clearly
+outside its own noise band this time.
 
-**`Replace_traversal`/`Replace_shuffled` -- compounds both of the above,
-via composition.** `Replace(old_id, new_id, ...)` is implemented as
-exactly `CancelOrder(old_id)` then `AddLimitOrder(new_id, ...)`. So it
-inherits `PruneAndEmitLevelUpdate`'s modest Cancel-side win on the first
-half, and `RestOrder`'s larger Add-side win on the second half whenever
-the replace doesn't cross the spread and rests (the common case, per
-`docs/benchmark_methodology.md`'s note on Replace's real-delta
-distribution). This is why Replace shows the second-largest delta of
-any variant, larger than Cancel alone and smaller than Add alone,
-without needing its own explanation. A back-of-envelope check:
-baseline Add_real (313.6c) minus step1 Add_real (262.8c) is ~50.8c
-saved; baseline Cancel_traversal (254.9c) minus step1 (248.4c) is ~6.5c
-saved; summed, ~57.3c, in the same ballpark as Replace_traversal's
-observed ~65c saved (703.5 -> 638.1) -- not exact (Replace's internal
-structure isn't literally "one Cancel plus one Add" once matching
-against the opposite side is involved), but the right order of
-magnitude to support composition as the mechanism rather than something
-Replace-specific.
+**`Replace_traversal`/`Replace_shuffled` -- confirmed, consistent with
+composition.** `Replace = CancelOrder(old_id) + AddLimitOrder(new_id, ...)`,
+so it inherits `PruneAndEmitLevelUpdate`'s Cancel-side win plus
+`RestOrder`'s larger Add-side win whenever the replace doesn't cross
+and rests. Lands at ~9.2-9.4%, between Cancel's and Add's own deltas,
+as the composition predicts.
 
-**One important caveat on all of the above:** this reasoning explains
-the *relative ranking* between variants, which is a fair thing to trust
-even from a clock-confounded dataset, since all 8 variants in a given
-run share the same clock domain and the same confound direction. It
-does *not* by itself validate the *magnitude* of any individual delta
-against the baseline -- that still requires the re-run described above.
+**`Reduce_traversal`/`Reduce_shuffled` -- partially falsified, and
+worth being precise about which part.** The original claim was: in the
+common (non-exhausting) case, `ReduceRestingQuantity` does exactly 2 map
+finds both before and after this commit (`LevelFor` + `EmitLevelUpdate`'s
+own `LevelFor`, old; `LevelFor` + `PruneAndEmitLevelUpdate`'s own
+`.find()`, new) -- so the find-count mechanism predicts ~0% delta. That
+part is **re-verified correct**: both old and new code do exactly two
+independent `.find(price)` calls on the non-exhausting path -- confirmed
+by re-reading both versions side by side, not just by the earlier
+summary. The find-count mechanism also correctly predicts Reduce should
+show *by far* the smallest movement of any variant, which is true both
+times this was measured (an order of magnitude below Add/Cancel/Replace
+either way).
 
-## The `OnOrderCancelled`/prune reordering: verified observable, not just theoretically
+**What it got wrong: "should show ~0% delta" is too strong a claim.**
+`Reduce_traversal` measures -2.17% here (and -1.45% in the invalidated
+run -- same direction both times, so this isn't run-to-run noise).
+Instructions/op (not just cycles) confirm something real changed:
+step1 executes ~1.17-1.18% *more* instructions per op than baseline,
+almost identically for both `Reduce_traversal` and `Reduce_shuffled`
+(302.5 -> 306.1 instr/op traversal, 303.7 -> 307.2 shuffled). Checked
+two hypotheses for where those extra instructions come from:
 
-The commit message called this reordering "unobservable... erasing an
-empty map node never calls a `BookListener` method." That's true for
-every listener that exists in this repo today (`RecordingListener`,
-`FuzzListener` -- both just append to vectors, neither queries book
-state). It is **not** true in general: nothing in `BookListener`'s
-interface or `OrderBook`'s public API stops a listener from holding its
-own pointer back to the same `OrderBook` and calling
-`BestBid()`/`BestAsk()`/`TopLevels()`/`FullBook()` synchronously from
-inside a callback.
+- *Lost inlining of `FindOrderInLevel`* (the shared function replacing
+  three duplicated `std::find_if` call sites) -- **ruled out.** Built
+  the pre-step-1 commit (`d8ca725`) in an isolated worktree and
+  disassembled `ReduceRestingQuantity` from both binaries
+  (`objdump -d --demangle`, Release/`-O3`/NDEBUG on both). No `bl`
+  (branch-with-link, i.e. a real out-of-line call) to `FindOrderInLevel`
+  exists in either version's hot path -- it's still fully inlined,
+  same as the old triplicated lambda was.
+- *Static code size* -- also doesn't explain it on its own: the new
+  compiled `ReduceRestingQuantity` is actually **smaller** (193 vs 206
+  static instructions) than the old one, which on its face argues the
+  opposite direction from the measured +1.17% *dynamic* instructions/op.
+  Static size and dynamic per-call execution count aren't the same
+  quantity once branch/loop paths differ, so this isn't a real
+  contradiction -- but it does mean a whole-function size diff can't
+  settle where the extra dynamic instructions come from.
 
-Added `tests/test_cancel.cpp`'s
-`Cancel.DuringOnOrderCancelledTheJustEmptiedLevelIsTransientlyStillQueryable`,
-using a new `BookQueryingListener` that does exactly that. Confirmed:
-cancelling the only order at a price level, and querying `BestAsk()`
-from inside `OnOrderCancelled`, returns that (now-empty) price level --
-it hasn't been pruned yet, because the erase now happens inside
-`PruneAndEmitLevelUpdate`, which runs *after* `OnOrderCancelled`
-returns. Once `CancelOrder` itself returns, `BestAsk()` correctly
-reports empty. 129/129 tests pass including this one.
+**Where this was left:** the extra ~3.5 instructions/op most likely
+come from how `PruneAndEmitLevelUpdate`'s branch structure (an
+explicit `it->second.empty()` check plus the buy/sell dispatch) got
+laid out differently than the old `EmitLevelUpdate` + conditional
+`EraseLevelIfEmpty`, but pinning that precisely -- and explaining why
+cycles diverge more sharply for `_traversal` (IPC drops 3.863->3.826)
+than for `_shuffled` (IPC actually ticks up 3.635->3.648) despite both
+getting nearly the same instruction-count increase -- would need
+branch-misprediction and cache-miss counters this harness doesn't
+collect (a limitation `docs/benchmark_methodology.md` already states:
+this PMU setup gives mean cycles/op, not a decomposition into stall
+categories). Not chased further given the honest ceiling on what two
+counters (cycles, instructions) can resolve, and given the absolute
+size of the effect (~1.7-2 cycles/op) is small on its own terms.
 
-Two things temper how alarming this is:
+**Net correction to the mechanism story:** the find-count reasoning
+correctly predicts *relative magnitude* across all four op types --
+Reduce is and should be an order of magnitude less affected than
+Add/Cancel/Replace, and it is. It does not correctly predict that
+Reduce should be a *wash*. There's a small, real, reproducible net cost
+(not a benefit) on this one variant that the step 1 hygiene pass
+introduced as a side effect, most likely in how
+`PruneAndEmitLevelUpdate` compiles relative to the old
+two-function split, not in anything algorithmic. Whether this ~2-cycle
+regression is worth chasing further (e.g. trying an alternate branch
+layout, or accepting it as noise-adjacent) is a step 2 call, not
+something this document resolves.
 
-1. **No listener in this codebase does this today**, so nothing is
-   currently broken by it.
-2. **This exact emit-before-erase pattern already existed elsewhere**
-   in the engine before this commit -- `MatchAgainst` (the fill-matching
-   loop) has always called `listener_.OnBookUpdate(...)` and *then*
-   erased the level if it emptied out from a fill, never the other way
-   around. So Phase 5 step 1 didn't invent a new kind of transient
-   inconsistency; it made `CancelOrder` consistent with a contract that
-   already existed on the fill path. It's a genuine change from what
-   `CancelOrder` *itself* used to guarantee, which is exactly why it's
-   worth documenting rather than leaving as an unstated coincidence.
+## The `OnOrderCancelled`/prune reordering: still verified observable
 
-Documented the contract directly on `BookListener::OnOrderCancelled` in
-`include/lob/listener.hpp`, pointing at the pinned-down test, so a
-future listener implementation that does want to query book state
-synchronously knows the rule instead of discovering it by accident.
+Unchanged from the prior investigation, independent of the benchmark
+correction above. `tests/test_cancel.cpp`'s
+`Cancel.DuringOnOrderCancelledTheJustEmptiedLevelIsTransientlyStillQueryable`
+uses a `BookQueryingListener` holding its own pointer back to the
+`OrderBook`, and confirms that cancelling the only order at a price
+level and querying `BestAsk()` from inside `OnOrderCancelled` returns
+that (now-empty) level -- it isn't pruned until `PruneAndEmitLevelUpdate`
+runs immediately after. No listener in this repo does this today
+(`RecordingListener`, `FuzzListener` only record events), and the same
+emit-before-erase pattern already existed on the `MatchAgainst` fill
+path before this commit, so `CancelOrder` is now consistent with a
+contract that already existed elsewhere in the engine rather than
+introducing a new kind of transience -- but it's a genuine change from
+what `CancelOrder` itself used to guarantee, so it's documented
+directly on `BookListener::OnOrderCancelled` in
+`include/lob/listener.hpp` and pinned by the test. 129/129 tests pass.
 
 ## Bottom line
 
-- **Correctness**: confirmed. 129/129 tests (128 existing + 1 new
-  regression test locking down the reordering behavior), no change to
-  mutation-testing or fuzz results claimed by this doc (unchanged from
-  the original commit's own verification).
-- **Performance**: not validly measured yet. The 10-run comparison in
-  this document was captured on battery power with Low Power Mode on,
-  landing on a ~2.1 GHz clock domain against a ~4.4 GHz baseline, and
-  cannot distinguish a real code-driven win from a clock-domain
-  artifact that would spuriously favor exactly the memory-bound
-  variants this change touches. Needs a re-run under matched power
-  conditions before any percentage from this step is cited as a result.
+- **Correctness**: confirmed. 129/129 tests, unchanged from the
+  original commit's own verification (mutation testing 140/140, fuzz
+  clean).
+- **Performance**: now validly measured. Add_real +19.8%, Add_widened
+  +12.3%, Cancel +7.7-7.9%, Replace +9.2-9.4% -- all real, all clear
+  their noise thresholds by comfortable margins, all mechanistically
+  explained by which of the three step-1 changes reaches which code
+  path. `Reduce_shuffled` is a wash (within noise, as predicted).
+  `Reduce_traversal` is a small, real, reproducible regression
+  (-2.17%) that the find-count mechanism didn't predict and that
+  disassembly narrowed down to "not lost inlining" without fully
+  resolving -- flagged honestly rather than folded into the win story.
+- **The residual ~1.6% clock gap** between this run and the baseline
+  is checked, not assumed away: it's too small to move any variant's
+  classification, and in the two cases where it matters most (Add's
+  large win, Reduce's regression) the direction of any residual bias
+  argues against, not for, the effect actually observed.
 - **The `OnOrderCancelled` reordering**: real and observable under a
-  specific, currently-hypothetical listener shape (one that queries the
-  book from inside a callback), not exercised by anything in this repo
-  today, and consistent with a contract (`OnBookUpdate` may fire before
-  an empty level is pruned) that already existed elsewhere in the
-  engine. Pinned down with a test and documented on the interface
-  rather than left as an unverified claim.
+  specific, currently-hypothetical listener shape, not exercised by
+  anything in this repo today, consistent with a pre-existing contract
+  elsewhere in the engine. Pinned down with a test, documented on the
+  interface.
+
+Phase 5 step 1 is ready to be called done: hygiene change, correctness
+verified, performance validly measured and net positive across 6 of 8
+variants, with the one regression documented rather than hidden.
