@@ -1,0 +1,27 @@
+=== bench_matching_engine ===
+CPU: Apple M4
+calibrated frequency this run: 4.322 GHz
+target symbol: SPY (stock_locate=7397)
+warmup: 45911 messages replayed, resting depth reached 133 (target 3000, NOT REACHED) -- stopped due to: Add reserve for the timed slice exhausted, (0 Replace with unknown original side, skipped)
+Adds used in warmup: 20886 of 29837 total (reserve for Add slice: 8951)
+real_adds collected (whole file, this symbol): 29837
+real Replace price deltas collected (whole file, this symbol): 1598
+resting orders in warmed book: 133 across 110 price levels (1.21 orders/level)
+
+--- results (mean cycles/op, single aggregate bracket per variant) ---
+  Add_real           ops=    8951  mean=   258.9 cycles (  59.9 ns)  l1d_refills= 2.328/op   storage_allocs=0.0000/op  
+  Add_widened        ops=    8951  mean=   400.1 cycles (  92.6 ns)  l1d_refills= 2.852/op   storage_allocs=0.0000/op  
+  [Cancel_traversal   pool=133 ops/round x 226 rounds]
+  Cancel_traversal   ops=   30058  mean=   172.8 cycles (  40.0 ns)  l1d_refills= 0.155/op   storage_allocs=0.0000/op  
+  [Cancel_shuffled    pool=133 ops/round x 226 rounds]
+  Cancel_shuffled    ops=   30058  mean=   167.6 cycles (  38.8 ns)  l1d_refills= 0.323/op   storage_allocs=0.0000/op  
+  [Reduce_traversal   pool=133 ops/round x 226 rounds]
+  Reduce_traversal   ops=   30058  mean=    75.1 cycles (  17.4 ns)  l1d_refills= 0.162/op   storage_allocs=0.0000/op  
+  [Reduce_shuffled    pool=133 ops/round x 226 rounds]
+  Reduce_shuffled    ops=   30058  mean=    82.6 cycles (  19.1 ns)  l1d_refills= 0.237/op   storage_allocs=0.0000/op  
+  [Replace_traversal  pool=133 ops/round x 226 rounds]
+  Replace_traversal  ops=   30058  mean=   527.3 cycles ( 122.0 ns)  l1d_refills= 0.635/op   storage_allocs=0.0000/op  
+  [Replace_shuffled   pool=133 ops/round x 226 rounds]
+  Replace_shuffled   ops=   30058  mean=   508.8 cycles ( 117.7 ns)  l1d_refills= 1.034/op   storage_allocs=0.0000/op  
+
+wrote bench/step2_spy_run_4.csv
