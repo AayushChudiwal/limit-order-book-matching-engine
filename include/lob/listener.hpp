@@ -45,6 +45,19 @@ class BookListener {
 
     virtual void OnFill(const Fill& fill) = 0;
     virtual void OnOrderAccepted(OrderId id) = 0;
+
+    // If a listener holds its own pointer back to the OrderBook it's
+    // registered with and queries it synchronously from inside this
+    // callback (BestBid/BestAsk/TopLevels/FullBook), and this cancel just
+    // emptied the order's price level, that level is transiently still
+    // present (with zero resting orders) until this call returns -- the
+    // erase happens right after, not before. This matches the OnBookUpdate
+    // contract already in effect elsewhere in the engine (see
+    // OrderBook::MatchAgainst, which has always emitted before erasing);
+    // see tests/test_cancel.cpp's
+    // DuringOnOrderCancelledTheJustEmptiedLevelIsTransientlyStillQueryable
+    // for the pinned-down behaviour. No listener in this repo does this
+    // today, so it's a documented contract, not an active bug.
     virtual void OnOrderCancelled(OrderId id, Quantity remaining_quantity) = 0;
     virtual void OnOrderModified(OrderId id, Quantity new_quantity) = 0;
     virtual void OnOrderRejected(OrderId id, RejectReason reason) = 0;
