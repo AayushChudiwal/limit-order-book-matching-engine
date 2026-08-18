@@ -213,10 +213,14 @@ directly on `BookListener::OnOrderCancelled` in
   clean).
 - **Performance**: now validly measured. Add_real +19.8%, Add_widened
   +12.3%, Cancel +7.7-7.9%, Replace +9.2-9.4% -- all real, all clear
-  their noise thresholds by comfortable margins, all mechanistically
-  explained by which of the three step-1 changes reaches which code
-  path. `Reduce_shuffled` is a wash (within noise, as predicted).
-  `Reduce_traversal` is a small, real, reproducible regression
+  their noise thresholds, all mechanistically explained by which of the
+  three step-1 changes reaches which code path. Cancel's margin (~1.5x
+  its threshold) is the thinnest of the four wins -- see
+  `docs/benchmark_methodology.md`'s new "N=10 isn't always enough
+  headroom" section, which sets N=20 as the bar for any future commit
+  whose headline claim is Cancel-sized or thinner. `Reduce_shuffled` is
+  a wash (within noise, as predicted). `Reduce_traversal` is a small,
+  real, reproducible regression
   (-2.17%) that the find-count mechanism didn't predict and that
   disassembly narrowed down to "not lost inlining" without fully
   resolving -- flagged honestly rather than folded into the win story.

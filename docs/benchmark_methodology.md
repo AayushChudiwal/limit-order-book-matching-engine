@@ -296,6 +296,27 @@ in the first place. If Phase 5's flat array / arena allocator shows a
 direct evidence the optimization created real, newly-exploitable
 locality, not just an artifact of how the benchmark is built.
 
+## N=10 isn't always enough headroom
+
+Cancel carries this baseline's second-highest CoV (~5.6-5.9%, only
+Replace_traversal's 4.58% and Replace_shuffled's 3.73% come close), which
+gives it the loosest min-detectable-improvement threshold of the eight
+variants (~5.0-5.3%). `docs/phase5_step1_results.md` measured Cancel's
+step-1 delta clearing that threshold by only ~1.5x (7.7-7.9% against a
+~5.0-5.3% floor) -- comfortably significant, but the smallest margin of
+any variant that commit touched, and a run or two of bad luck away from
+being ambiguous. **Any future commit whose primary claimed win is on
+Cancel (or another variant already running close to a 1.5-2x margin)
+should collect N=20 rather than N=10** before calling the result
+significant -- the SE-of-the-difference threshold this document uses
+scales with `sqrt(2/N)`, so doubling N tightens it by ~29%
+(`sqrt(2/20)` vs `sqrt(2/10)`), which is enough to turn a 1.5x margin
+into a materially safer one without having to assume the underlying
+noise itself has changed. This isn't a rule for every commit -- Add's
+9x+ margins and Reduce's own tight ~1.2-1.4% CoV don't need it -- it's
+specifically for whenever the headline number is Cancel-sized or the
+margin is already thin.
+
 ## Reproducing this
 
 ```

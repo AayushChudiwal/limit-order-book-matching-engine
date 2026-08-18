@@ -11,6 +11,12 @@ endif()
 
 option(LOB_ENABLE_SANITIZERS "Build with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
 
+# Level/order-storage churn counters (see include/lob/bench/churn.hpp),
+# OFF by default so the N=10/N=20 PMU cycle comparisons this project's
+# benchmark docs cite are never silently carrying this instrumentation's
+# overhead. Turn ON only for a dedicated churn-diagnostic run.
+option(LOB_TRACK_CHURN "Instrument OptimizedOrderBook's level/order-storage allocation churn" OFF)
+
 add_library(lob_engine
   src/order_book.cpp
 )
@@ -69,10 +75,40 @@ add_library(lob_bench
   src/bench/stats.cpp
   src/bench/scheduling.cpp
   src/bench/frequency.cpp
+  src/bench/churn.cpp
 )
 target_include_directories(lob_bench PUBLIC include)
 target_compile_features(lob_bench PUBLIC cxx_std_20)
 target_compile_options(lob_bench PRIVATE -Wall -Wextra -Wpedantic)
+# PUBLIC: propagates to lob_optimized_engine (LevelOrders calls these) and
+# to bench_matching_engine (reads ReadChurn()) so both always see the SAME
+# value this was configured with -- a mismatch between how churn.cpp and
+# optimized_order_book.cpp were each compiled would be a link error (the
+# real counter functions only exist in the ON branch).
+target_compile_definitions(lob_bench PUBLIC LOB_TRACK_CHURN=$<BOOL:${LOB_TRACK_CHURN}>)
+
+if(LOB_ENABLE_SANITIZERS)
+  target_compile_options(lob_bench PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(lob_bench PUBLIC -fsanitize=address,undefined)
+endif()
+
+# Phase 5's optimized engine (step 2 onward) -- see
+# include/lob/optimized_order_book.hpp's class comment for why this is a
+# separate library/class from lob_engine rather than more changes to
+# order_book.cpp. Depends on lob_bench for the churn counters LevelOrders
+# calls; lob_engine (the reference) deliberately does not and never will.
+add_library(lob_optimized_engine
+  src/optimized_order_book.cpp
+)
+target_include_directories(lob_optimized_engine PUBLIC include)
+target_compile_features(lob_optimized_engine PUBLIC cxx_std_20)
+target_compile_options(lob_optimized_engine PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(lob_optimized_engine PUBLIC lob_bench)
+
+if(LOB_ENABLE_SANITIZERS)
+  target_compile_options(lob_optimized_engine PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(lob_optimized_engine PUBLIC -fsanitize=address,undefined)
+endif()
 
 add_executable(itch_replay
   tools/itch_replay.cpp
@@ -107,7 +143,12 @@ target_compile_options(pmu_validate PRIVATE -Wall -Wextra -Wpedantic)
 add_executable(bench_matching_engine
   tools/bench_matching_engine.cpp
 )
-target_link_libraries(bench_matching_engine PRIVATE lob_bench lob_engine lob_itch)
+# lob_optimized_engine, not lob_engine -- this tool targets Phase 5's
+# optimized engine (see optimized_order_book.hpp's class comment on why
+# that's a separate class from the reference OrderBook). lob_bench is
+# linked PUBLIC by lob_optimized_engine already (for the churn counters),
+# which also carries the correct LOB_TRACK_CHURN compile definition here.
+target_link_libraries(bench_matching_engine PRIVATE lob_optimized_engine lob_itch)
 target_compile_options(bench_matching_engine PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(cache_line_probe

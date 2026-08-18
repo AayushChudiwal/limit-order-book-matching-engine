@@ -1,5 +1,17 @@
-// bench_matching_engine: measures OrderBook operation cost per op type
-// (Add, Cancel, Reduce, Replace) against real PSX SPY data.
+// bench_matching_engine: measures OptimizedOrderBook operation cost per op
+// type (Add, Cancel, Reduce, Replace) against real PSX SPY data.
+//
+// Targets lob::OptimizedOrderBook (include/lob/optimized_order_book.hpp),
+// not the reference lob::OrderBook -- Phase 5 step 1's numbers
+// (docs/benchmark_methodology.md, docs/phase5_step1_results.md) were
+// captured against OrderBook itself, back when it was still the only
+// engine; step 2 onward forked into OptimizedOrderBook (see that file's
+// class comment), so this tool follows the fork. Continuing an N-run
+// series across that fork is valid -- OptimizedOrderBook started as an
+// exact behavioral copy of OrderBook post-step-1 -- but don't compare
+// numbers from before the fork against a DIFFERENT build of this tool
+// that still targeted OrderBook without checking both sides used the
+// same target.
 //
 // History (see docs/benchmark_methodology.md for the full account): a
 // per-op mach_absolute_time() design was tried and rejected -- at this
@@ -19,6 +31,23 @@
 // distribution -- see docs/benchmark_methodology.md for why that's not
 // measurable on this platform at this operation size, stated plainly
 // rather than papered over with a quantized histogram.
+//
+// Also reads ARM_L1D_CACHE_REFILL (same bracket, same before/after
+// snapshot as cycles/instructions -- no extra PMU reads) into
+// l1d_cache_refills / mean_l1d_refills_per_op. Validated TRUSTED in
+// docs/pmu_validation.md (branch mispredicts was NOT and is never
+// configured, see PmuCounters). Labelling caveat, stated once here
+// rather than at every callsite: this is ARM's L1D_CACHE_REFILL event,
+// which on most Arm PMU implementations counts linefill traffic more
+// broadly than only CPU-demand accesses (a prefetch that fills a line
+// but is never subsequently touched can also increment it) -- this
+// repo's validation confirmed the counter responds correctly to real
+// locality pressure (a small buffer that fits L1D vs a large one that
+// doesn't), not that it exclusively attributes refills to demand
+// accesses on this specific chip. Treat "L1D cache refills" as the
+// accurate label; do not read it as "L1D demand misses" without further
+// validation. Empty in the CSV (not zero) if this chip/OS doesn't
+// expose the event -- see the startup warning.
 //
 // Each pass starts from a FRESH COPY of the same warmed-up book (built
 // once from a real, untimed replay of SPY's early message history), so
@@ -54,19 +83,21 @@
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
+#include <optional>
 #include <random>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
 
+#include "lob/bench/churn.hpp"
 #include "lob/bench/frequency.hpp"
 #include "lob/bench/pmu.hpp"
 #include "lob/bench/scheduling.hpp"
 #include "lob/itch/mapped_file.hpp"
 #include "lob/itch/messages.hpp"
 #include "lob/itch/reader.hpp"
-#include "lob/order_book.hpp"
+#include "lob/optimized_order_book.hpp"
 
 using lob::bench::CalibrateGigahertz;
 using lob::bench::CurrentCpuNumber;
@@ -130,7 +161,7 @@ struct RestingOrder {
     lob::Quantity qty;
 };
 
-std::vector<RestingOrder> CollectRestingOrders(const lob::OrderBook& book) {
+std::vector<RestingOrder> CollectRestingOrders(const lob::OptimizedOrderBook& book) {
     std::vector<RestingOrder> out;
     for (const lob::Side side : {lob::Side::Buy, lob::Side::Sell}) {
         for (const auto& level : book.FullBook(side)) {
@@ -142,7 +173,7 @@ std::vector<RestingOrder> CollectRestingOrders(const lob::OrderBook& book) {
     return out;
 }
 
-std::size_t CountLevels(const lob::OrderBook& book) {
+std::size_t CountLevels(const lob::OptimizedOrderBook& book) {
     std::size_t n = 0;
     for (const lob::Side side : {lob::Side::Buy, lob::Side::Sell}) {
         n += book.FullBook(side).size();
@@ -155,6 +186,25 @@ struct PassResult {
     std::uint64_t ops = 0;
     std::uint64_t cycles = 0;
     std::uint64_t instructions = 0;
+    // ARM_L1D_CACHE_REFILL, validated TRUSTED in docs/pmu_validation.md
+    // (large-vs-small-buffer sanity check). nullopt if this chip/OS
+    // didn't expose the event (PmuCounters::IsL1dCacheRefillsAvailable()
+    // was false) -- every variant in one run shares the same
+    // availability, so this is either set for all of them or none.
+    std::optional<std::uint64_t> l1d_cache_refills;
+    // Always present (never optional) -- ReadChurn() returns an
+    // all-zero snapshot when LOB_TRACK_CHURN wasn't compiled into the
+    // linked lob_optimized_engine, same shape either way. See
+    // include/lob/bench/churn.hpp: a LOB_TRACK_CHURN=OFF build (the
+    // default, used for every trusted cycle number this project cites)
+    // costs nothing extra reading this -- the counters themselves
+    // compile to nothing, so the delta is always {0,0,0,0}. A
+    // LOB_TRACK_CHURN=ON build's churn_* fields here are meaningful;
+    // its cycle/instructions/l1d fields in the SAME run are NOT --
+    // counting churn on every level/order-storage event adds real
+    // overhead to the exact code paths being cycle-timed. Run twice,
+    // once per build config, never cite cycles from an ON build.
+    lob::bench::ChurnSnapshot churn_delta;
     bool migrated = false;
 };
 
@@ -162,15 +212,27 @@ template <typename Fn>
 PassResult TimePass(const PmuCounters& pmu, std::string label, std::uint64_t op_count,
                     Fn&& run_all) {
     if (op_count == 0) {
-        return PassResult{std::move(label), 0, 0, 0, false};
+        return PassResult{std::move(label), 0, 0, 0, std::nullopt, {}, false};
     }
     const std::size_t cpu_before = CurrentCpuNumber();
     const auto before = pmu.Read();
+    const auto churn_before = lob::bench::ReadChurn();
     run_all();
     const auto after = pmu.Read();
+    const auto churn_after = lob::bench::ReadChurn();
     const std::size_t cpu_after = CurrentCpuNumber();
+    std::optional<std::uint64_t> l1d_refills;
+    if (before.l1d_cache_refills && after.l1d_cache_refills) {
+        l1d_refills = *after.l1d_cache_refills - *before.l1d_cache_refills;
+    }
+    const lob::bench::ChurnSnapshot churn_delta{
+        churn_after.level_creates - churn_before.level_creates,
+        churn_after.level_destroys - churn_before.level_destroys,
+        churn_after.order_storage_allocs - churn_before.order_storage_allocs,
+        churn_after.order_storage_frees - churn_before.order_storage_frees};
     return PassResult{std::move(label), op_count, after.cycles - before.cycles,
-                      after.instructions - before.instructions, cpu_after != cpu_before};
+                      after.instructions - before.instructions, l1d_refills, churn_delta,
+                      cpu_after != cpu_before};
 }
 
 // Runs `apply_round` (one full pass over a fixed-size pool) repeatedly,
@@ -190,7 +252,7 @@ PassResult TimeCyclingPass(const PmuCounters& pmu, std::string label, std::size_
                            std::uint64_t min_total_ops, ApplyRoundFn&& apply_round,
                            ReplenishRoundFn&& replenish_round) {
     if (pool_size == 0) {
-        return PassResult{std::move(label), 0, 0, 0, false};
+        return PassResult{std::move(label), 0, 0, 0, std::nullopt, {}, false};
     }
     const std::size_t rounds =
         (min_total_ops + pool_size - 1) / pool_size;  // ceil(min_total_ops / pool_size)
@@ -198,6 +260,8 @@ PassResult TimeCyclingPass(const PmuCounters& pmu, std::string label, std::size_
     std::uint64_t total_ops = 0;
     std::uint64_t total_cycles = 0;
     std::uint64_t total_instructions = 0;
+    std::optional<std::uint64_t> total_l1d_refills;
+    lob::bench::ChurnSnapshot total_churn{};
     bool migrated = false;
     for (std::size_t r = 0; r < rounds; ++r) {
         if (r > 0) {
@@ -205,17 +269,38 @@ PassResult TimeCyclingPass(const PmuCounters& pmu, std::string label, std::size_
         }
         const std::size_t cpu_before = CurrentCpuNumber();
         const auto before = pmu.Read();
+        const auto churn_before = lob::bench::ReadChurn();
         apply_round();
         const auto after = pmu.Read();
+        const auto churn_after = lob::bench::ReadChurn();
         const std::size_t cpu_after = CurrentCpuNumber();
         total_ops += pool_size;
         total_cycles += after.cycles - before.cycles;
         total_instructions += after.instructions - before.instructions;
+        if (before.l1d_cache_refills && after.l1d_cache_refills) {
+            total_l1d_refills = total_l1d_refills.value_or(0) +
+                                (*after.l1d_cache_refills - *before.l1d_cache_refills);
+        }
+        total_churn.level_creates += churn_after.level_creates - churn_before.level_creates;
+        total_churn.level_destroys += churn_after.level_destroys - churn_before.level_destroys;
+        total_churn.order_storage_allocs +=
+            churn_after.order_storage_allocs - churn_before.order_storage_allocs;
+        total_churn.order_storage_frees +=
+            churn_after.order_storage_frees - churn_before.order_storage_frees;
         migrated = migrated || (cpu_after != cpu_before);
     }
-    return PassResult{std::move(label), total_ops, total_cycles, total_instructions, migrated};
+    return PassResult{std::move(label),   total_ops,  total_cycles, total_instructions,
+                      total_l1d_refills, total_churn, migrated};
 }
 
+// Builds the CSV row as an explicit vector of fields rather than a chain
+// of `<<` with a hand-counted number of literal commas for the
+// "unavailable" cases -- an earlier version of this function got that
+// count wrong for the l1d-unavailable branch (one comma short of the
+// two empty fields it needed), undetected because L1D refills happen to
+// be available on every machine this tool has actually run on so far.
+// Explicit fields + a single join makes that whole class of bug
+// impossible to reintroduce silently.
 void PrintAndRecord(const PassResult& r, double ghz, std::ofstream& csv) {
     if (r.ops == 0) {
         std::printf("  %-18s SKIPPED (no ops available)\n", r.label.c_str());
@@ -223,11 +308,50 @@ void PrintAndRecord(const PassResult& r, double ghz, std::ofstream& csv) {
     }
     const double mean_cycles = static_cast<double>(r.cycles) / static_cast<double>(r.ops);
     const double mean_ns = mean_cycles / ghz;
-    std::printf("  %-18s ops=%8llu  mean=%8.1f cycles (%6.1f ns)  %s\n", r.label.c_str(),
-                static_cast<unsigned long long>(r.ops), mean_cycles, mean_ns,
-                r.migrated ? "[MIGRATED]" : "");
-    csv << r.label << ',' << r.ops << ',' << r.cycles << ',' << r.instructions << ',' << mean_cycles
-        << ',' << mean_ns << ',' << (r.migrated ? 1 : 0) << '\n';
+    const double mean_storage_allocs =
+        static_cast<double>(r.churn_delta.order_storage_allocs) / static_cast<double>(r.ops);
+
+    std::string l1d_print = "l1d_refills=n/a";
+    std::string l1d_refills_field;
+    std::string mean_l1d_refills_field;
+    if (r.l1d_cache_refills) {
+        const double mean_l1d_refills =
+            static_cast<double>(*r.l1d_cache_refills) / static_cast<double>(r.ops);
+        char print_buf[48];
+        std::snprintf(print_buf, sizeof(print_buf), "l1d_refills=%6.3f/op", mean_l1d_refills);
+        l1d_print = print_buf;
+        l1d_refills_field = std::to_string(*r.l1d_cache_refills);
+        char mean_buf[32];
+        std::snprintf(mean_buf, sizeof(mean_buf), "%.6f", mean_l1d_refills);
+        mean_l1d_refills_field = mean_buf;
+    }
+
+    std::printf(
+        "  %-18s ops=%8llu  mean=%8.1f cycles (%6.1f ns)  %-22s  storage_allocs=%6.4f/op  %s\n",
+        r.label.c_str(), static_cast<unsigned long long>(r.ops), mean_cycles, mean_ns,
+        l1d_print.c_str(), mean_storage_allocs, r.migrated ? "[MIGRATED]" : "");
+
+    const std::vector<std::string> fields = {
+        r.label,
+        std::to_string(r.ops),
+        std::to_string(r.cycles),
+        std::to_string(r.instructions),
+        std::to_string(mean_cycles),
+        std::to_string(mean_ns),
+        l1d_refills_field,       // empty field if unavailable
+        mean_l1d_refills_field,  // empty field if unavailable
+        std::to_string(r.churn_delta.level_creates),
+        std::to_string(r.churn_delta.level_destroys),
+        std::to_string(r.churn_delta.order_storage_allocs),
+        std::to_string(r.churn_delta.order_storage_frees),
+        std::to_string(mean_storage_allocs),
+        std::to_string(r.migrated ? 1 : 0),
+    };
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        if (i > 0) csv << ',';
+        csv << fields[i];
+    }
+    csv << '\n';
 }
 
 struct Args {
@@ -356,7 +480,7 @@ int Run(int argc, char** argv) {
                               static_cast<std::size_t>(total_target_adds * kAddReserveFraction)));
 
     NullListener listener;
-    lob::OrderBook warmup_book(listener);
+    lob::OptimizedOrderBook warmup_book(listener);
     std::unordered_map<std::uint64_t, std::int64_t> order_price;
     std::vector<std::int64_t> replace_deltas;
     std::vector<AddRecord> real_adds;
@@ -517,8 +641,24 @@ int Run(int argc, char** argv) {
         return 1;
     }
 
+    if (!pmu.IsL1dCacheRefillsAvailable()) {
+        std::fprintf(stderr,
+                     "warning: ARM_L1D_CACHE_REFILL not available on this chip/OS -- "
+                     "l1d_cache_refills columns will be empty\n");
+    }
+#if defined(LOB_TRACK_CHURN) && LOB_TRACK_CHURN
+    std::fprintf(stderr,
+                 "NOTE: built with LOB_TRACK_CHURN=ON -- churn_* columns in this run are "
+                 "meaningful, but cycles/instructions/l1d_cache_refills are NOT: counting "
+                 "every level/order-storage event adds real overhead to the exact code paths "
+                 "being cycle-timed. Never cite cycle numbers from this build; re-run with "
+                 "LOB_TRACK_CHURN=OFF (the default) for those.\n");
+#endif
+
     std::ofstream csv(args.out_csv);
-    csv << "variant,ops,cycles,instructions,mean_cycles_per_op,mean_ns_per_op,migrated\n";
+    csv << "variant,ops,cycles,instructions,mean_cycles_per_op,mean_ns_per_op,l1d_cache_refills,"
+           "mean_l1d_refills_per_op,level_creates,level_destroys,order_storage_allocs,"
+           "order_storage_frees,mean_storage_allocs_per_op,migrated\n";
 
     std::printf("\n--- results (mean cycles/op, single aggregate bracket per variant) ---\n");
 
@@ -532,7 +672,7 @@ int Run(int argc, char** argv) {
     const std::size_t add_slice_end = std::min(real_adds.size(), add_slice_begin + kAddSliceMax);
 
     {
-        lob::OrderBook pass_book = warmup_book;
+        lob::OptimizedOrderBook pass_book = warmup_book;
         auto result = TimePass(pmu, "Add_real", add_slice_end - add_slice_begin, [&]() {
             for (std::size_t i = add_slice_begin; i < add_slice_end; ++i) {
                 const auto& a = real_adds[i];
@@ -547,7 +687,7 @@ int Run(int argc, char** argv) {
     // such, bounding how much of any future gain depends on tight real-
     // world clustering. ---
     {
-        lob::OrderBook pass_book = warmup_book;
+        lob::OptimizedOrderBook pass_book = warmup_book;
         auto result = TimePass(pmu, "Add_widened", add_slice_end - add_slice_begin, [&]() {
             for (std::size_t i = add_slice_begin; i < add_slice_end; ++i) {
                 const auto& a = real_adds[i];
@@ -588,7 +728,7 @@ int Run(int argc, char** argv) {
     };
 
     auto run_cancel = [&](const char* label, const std::vector<std::size_t>& order) {
-        lob::OrderBook pass_book = warmup_book;
+        lob::OptimizedOrderBook pass_book = warmup_book;
         print_cycling_info(label, order.size());
         auto result = TimeCyclingPass(
             pmu, label, order.size(), kMinCyclingOps,
@@ -618,7 +758,7 @@ int Run(int argc, char** argv) {
     // the order never fully empties (max(1, qty/2) never reaches zero),
     // so it's always found.
     auto run_reduce = [&](const char* label, const std::vector<std::size_t>& order) {
-        lob::OrderBook pass_book = warmup_book;
+        lob::OptimizedOrderBook pass_book = warmup_book;
         print_cycling_info(label, order.size());
         auto result = TimeCyclingPass(
             pmu, label, order.size(), kMinCyclingOps,
@@ -650,7 +790,7 @@ int Run(int argc, char** argv) {
     // Replenish tracks each pool slot's CURRENT id (it changes every
     // round) and resets it to the ORIGINAL id/price via cancel + re-add.
     auto run_replace = [&](const char* label, const std::vector<std::size_t>& order) {
-        lob::OrderBook pass_book = warmup_book;
+        lob::OptimizedOrderBook pass_book = warmup_book;
         print_cycling_info(label, order.size());
         std::mt19937_64 delta_rng(kFixedSeed);
         std::uint64_t next_synthetic_id = kSyntheticIdBase + real_adds.size() + 1;
