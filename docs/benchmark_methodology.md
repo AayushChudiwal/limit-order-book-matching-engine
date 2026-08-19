@@ -353,6 +353,65 @@ the same file) real data -- confirmed by the 10 SPY runs replaying
 identical warmup/op counts every time. Run-to-run differences are pure
 measurement noise, captured in the table above.
 
+## Measurement confounds this project has actually hit
+
+Distinct from the instrument designs above -- those were rejected on
+design grounds before producing numbers; these produced numbers that
+were believed for a while. Collected in one place because they are more
+useful together than scattered across three documents. All three are the same underlying
+mistake -- trusting a number without controlling what else changed
+between the two things being compared -- and all three produced
+confident, badly wrong conclusions before being caught.
+
+**1. CPU power state (Phase 5 step 1).** A benchmark set was collected
+with the machine in Low-Power Mode, at 2.088 GHz against a normal
+4.406 GHz. Full account in `docs/phase5_step1_results.md`; the run set
+was invalidated and re-collected. Lasting rule: every run prints its own
+calibrated clock, and a set outside the ~4.3-4.5 GHz P-core band is not
+trusted. The subtler half is that clock affects *cycle counts* in a
+direction that flatters whichever side ran slower -- a fixed-nanosecond
+memory stall costs fewer cycles at a lower clock -- so a low-clock run
+inflates apparent wins and understates regressions.
+
+**2. Background load (Phase 5 step 4).** A fuzz sweep was timed while two
+sanitizer jobs were saturating the machine, read as a >13x regression,
+and very nearly written into a source comment as the justification for
+an optimization. Re-measured on an idle machine, the real difference was
+**3%**. Nothing about the code had changed between the two readings.
+
+**3. Sequential A/B on a drifting machine (Phase 5 step 4).** The worst
+of the three, because it looks like a controlled comparison. Two engine
+versions were timed one after the other to attribute a regression. The
+numbers were unusable, and the tell was that the *same* binary, doing
+identical work, measured:
+
+| step 2 probe binary, identical workload | ns/add |
+|---|---:|
+| first invocation | 125.75 |
+| ten minutes later | 51.09 |
+
+**2.4x apart, same code, same input.** Any A/B conclusion drawn from
+two sequential runs in that window would have been noise dressed as a
+result -- and with a plausible hypothesis in hand it would have been
+easy to believe.
+
+The fix is **interleaving**: run A, B, C, A, B, C, ... for several
+passes and take each binary's minimum, so machine drift lands on every
+candidate rather than on whichever happened to run during a bad patch.
+Interleaved, the same comparison was stable and the depth trend it
+revealed was unambiguous (see `docs/phase5_step4_results.md`). This is
+also why the PMU benchmark compares whole *run sets* against whole run
+sets with per-run clocks recorded, rather than single runs.
+
+### The common rule
+
+Before believing a comparison, ask what else differed between the two
+measurements. Clock, thermal state, background load, and elapsed time
+all qualify, and none of them show up in the number itself. When the
+answer is "I'm not sure", interleave and re-measure -- it costs minutes
+and it is the only thing that distinguishes these failures from real
+results.
+
 ## Fuzz sweep cost: superlinear in op count, and why that shapes CI budgets
 
 This section is about `tools/fuzz_soak.cpp`, not the PMU benchmark, but
