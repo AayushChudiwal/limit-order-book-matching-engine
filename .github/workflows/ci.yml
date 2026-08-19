@@ -145,6 +145,24 @@ jobs:
       # Seeds are offset by the run number so consecutive pushes explore
       # fresh ground, while `fuzz_soak <mode> <offset> 40 2000` stays
       # exactly reproducible locally for any offset in the log.
+      #
+      # BOTH MODES WERE VERIFIED TO ACTUALLY FAIL, not just to pass.
+      # A CI job that cannot fail is worse than no job at all: it is a
+      # green check that means nothing and that nobody re-examines. So
+      # before this job was committed, fuzz_soak was rebuilt against
+      # deliberately broken engines from include/lob/fuzz/buggy_order_book.hpp
+      # and confirmed to detect them:
+      #
+      #   BuggyOrderBookVariant<FifoViolatedLifoInstead>
+      #     -> differential mode reports the diverging fill and exits 1
+      #   BuggyOrderBookVariant<PriceLevelNotRemovedOnLastCancel>
+      #     -> invariant mode reports "empty price level left in book"
+      #        and exits 1
+      #   the real OptimizedOrderBook
+      #     -> both modes exit 0
+      #
+      # If you change fuzz_soak's failure/exit-code plumbing, redo that
+      # check. Passing on correct code proves nothing on its own.
       - name: Sanitized sweep -- invariants on OptimizedOrderBook
         env:
           ASAN_OPTIONS: detect_leaks=1

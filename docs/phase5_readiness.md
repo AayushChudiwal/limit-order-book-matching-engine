@@ -53,6 +53,44 @@ whether the corrupted read happens to still produce plausible-looking
 output. This is not optional infrastructure to add later -- it is the
 specific tool for this specific gap.
 
+> **UPDATE (step 4, arena allocation).** Both halves of this were built,
+> and the second one changes what the first is *for*. Read the two
+> together, because the original "ASan is the only tool" framing above is
+> now only true of one specific build.
+>
+> **1. The sanitized sweep exists.** `ci.yml`'s `fuzz-sanitized` job
+> (per-push, 40 seeds x 2,000 ops, both modes) and
+> `fuzz-nightly.yml`'s `sanitized` job (120 seeds x 10,000 ops, both
+> modes) run the real fuzz corpus against `OptimizedOrderBook` under
+> ASan+UBSan. First full nightly: 2,670 (profile, seed) combinations,
+> all clean.
+>
+> **2. Arena handles carry generation tags, so UAF is no longer
+> invisible to the behavioural harness.** A handle is (index,
+> generation); freeing a slot bumps its generation; dereferencing
+> validates. A stale handle is therefore a detected error *inside the
+> engine*, not a silent read of recycled memory -- which means
+> `RunDifferential`, `CheckInvariants`, and the plain unit tests all
+> catch it, on every push, in seconds. That is a large improvement in
+> feedback latency over "wait for a 95-minute nightly to happen to draw
+> the right seed shape".
+>
+> **What this does NOT mean is that the ASan nightly is now redundant.**
+> The tags are behind `LOB_ARENA_GENERATION_TAGS`, ON for
+> debug/sanitizer/CI builds and **OFF for the benchmark build**, so the
+> published cycle numbers never pay for them. The untagged build is
+> therefore a genuinely different program from the one CI exercises --
+> and it is the one this project publishes performance claims about. It
+> deserves independent verification that does not depend on the
+> mechanism being compiled out.
+>
+> So the roles are now: **generation tags are the fast catcher for the
+> tagged build; the ASan nightly is the backstop for the untagged,
+> release-shaped build.** Neither covers the other's build. The standing
+> requirement in `docs/phase5_plan.md` -- untagged ASan nightly green on
+> the commit before an ownership-changing change counts as landed --
+> stands for exactly that reason.
+
 ### A custom hash map with a bug only at high load factor or on collision-heavy key patterns?
 
 **Unreliably, as the generator is tuned today.** `Generator`'s order ids
@@ -105,9 +143,9 @@ flag.
 | Phase 5 concern | Caught by this harness as built today? | What closes the gap |
 |---|---|---|
 | Flat array tick-band drift/rebasing | Partially, by chance | A dedicated price-drift generator profile once the band size is known |
-| Arena allocator UAF | No | ASan on the fuzz corpus |
+| Arena allocator UAF | **Now yes, in tagged builds** -- generation-tagged handles make a stale deref a detected engine error, caught by the ordinary differential/invariant/unit tests. Originally: no. | Generation tags (`LOB_ARENA_GENERATION_TAGS`, ON in CI) **plus** the ASan nightly as backstop for the untagged benchmark build |
 | Custom hash map at high load factor / adversarial keys | Unreliably | Targeted unit tests against the hash map directly |
-| UB with no observable corruption this run | No | ASan/UBSan on the fuzz corpus, run at volume |
+| UB with no observable corruption this run | No | ASan/UBSan on the fuzz corpus, run at volume -- built, see `fuzz-nightly.yml` |
 
 ## What this harness IS proven to do well
 

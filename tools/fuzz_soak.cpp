@@ -260,6 +260,13 @@ int main(int argc, char** argv) {
     std::printf("fuzz_soak [%s]: seeds [%llu, %llu), %d ops each, all three profiles\n",
                 ModeName(*mode), static_cast<unsigned long long>(seed_offset),
                 static_cast<unsigned long long>(seed_offset) + seed_count, op_count);
+    // Printed, rather than silently skipped, so a green short sweep can
+    // never be mistaken for evidence of full generator coverage. The
+    // check is gated (see kCoverageCheckMinOps) because it asserts a
+    // property of the generator AT VOLUME and fails on healthy code
+    // below ~20k ops; a gate that hides itself would just relocate the
+    // confusion from "flaky CI" to "CI that quietly tests less than its
+    // name suggests".
     if (*mode != Mode::kDifferential) {
         std::printf("generator-coverage assertion: %s (needs op_count >= %d; see kCoverageCheckMinOps)\n",
                     op_count >= kCoverageCheckMinOps ? "ENFORCED" : "SKIPPED -- run too short",
