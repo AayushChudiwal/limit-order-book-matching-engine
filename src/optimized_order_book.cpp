@@ -10,11 +10,9 @@ constexpr Side Opposite(Side side) { return side == Side::Buy ? Side::Sell : Sid
 }  // namespace
 
 Quantity OptimizedOrderBook::SumLevel(const LevelQueue& level) const {
-    Quantity total{0};
-    for (auto it = level.begin(order_arena_); it != level.end(order_arena_); ++it) {
-        total += it->quantity;
-    }
-    return total;
+    // O(1) now: LevelOrders maintains this incrementally. Debug builds
+    // still re-derive and assert it inside Total() -- see LevelOrders.
+    return level.Total(order_arena_);
 }
 
 bool OptimizedOrderBook::Crosses(Side aggressor_side, Price limit_price, Price level_price) {
@@ -99,6 +97,7 @@ Quantity OptimizedOrderBook::MatchAgainst(OppositeMap& opposite, OrderId aggress
             listener_.OnFill(Fill{aggressor_id, resting.id, aggressor_side, level_price, traded});
             remaining -= traded;
             resting.quantity -= traded;
+            queue.AdjustTotal(-traded.units);
 
             if (resting.quantity.units == 0) {
                 locations_.erase(resting.id);
@@ -203,6 +202,7 @@ void OptimizedOrderBook::ModifyOrder(OrderId id, Price new_price, Quantity new_q
     const bool quantity_reduced_or_equal = new_quantity.units <= order_it->quantity.units;
 
     if (same_price && quantity_reduced_or_equal) {
+        level->AdjustTotal(new_quantity.units - order_it->quantity.units);
         order_it->quantity = new_quantity;
         listener_.OnOrderModified(id, new_quantity);
         listener_.OnBookUpdate(loc.side, loc.price, SumLevel(*level));
@@ -238,6 +238,7 @@ void OptimizedOrderBook::ReduceRestingQuantity(OrderId id, Quantity amount) {
     }
 
     order_it->quantity -= amount;
+    level->AdjustTotal(-amount.units);
     if (order_it->quantity.units == 0) {
         level->erase(order_arena_, order_it);
         locations_.erase(it);

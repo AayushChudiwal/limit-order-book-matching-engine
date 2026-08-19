@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
+#include <vector>
 
 #include "lob/optimized_order_book.hpp"
 #include "test_listener.hpp"
@@ -368,4 +370,126 @@ TEST(OptimizedArenaOwnership, CompactionPreservesFifoOrder) {
     for (std::size_t i = 0; i < orders.size(); ++i) {
         EXPECT_EQ(orders[i].id, OrderId{expected[i]}) << "FIFO position " << i;
     }
+}
+
+// ---------------------------------------------------------------------
+// Incremental level totals.
+//
+// SumLevel used to walk a level's orders on every mutating operation,
+// because OnBookUpdate reports the level's aggregate resting quantity
+// after every change. It is now maintained incrementally and read in
+// O(1). LevelOrders::Total() re-derives and asserts it in debug builds,
+// but that assert only protects builds with NDEBUG off -- these tests
+// check the OBSERVABLE totals, so a drift bug is caught in Release too.
+//
+// This matters more than a normal correctness test because
+// RunDifferential does not compare OnBookUpdate payloads and
+// CheckInvariants derives its totals by walking FullBook -- so neither
+// would notice a wrong emitted total.
+// ---------------------------------------------------------------------
+
+namespace {
+// Last total reported for a side/price, or -1 if never reported.
+std::int64_t LastTotal(const RecordingListener& l, Side side, Price price) {
+    std::int64_t found = -1;
+    for (const auto& u : l.book_updates) {
+        if (u.side == side && u.price == price) found = u.total_quantity.units;
+    }
+    return found;
+}
+}  // namespace
+
+TEST(OptimizedLevelTotals, AddsAccumulate) {
+    RecordingListener listener;
+    OptimizedOrderBook book(listener);
+
+    book.AddLimitOrder(OrderId{1}, Side::Buy, Price{100}, Quantity{10});
+    EXPECT_EQ(LastTotal(listener, Side::Buy, Price{100}), 10);
+    book.AddLimitOrder(OrderId{2}, Side::Buy, Price{100}, Quantity{25});
+    EXPECT_EQ(LastTotal(listener, Side::Buy, Price{100}), 35);
+    book.AddLimitOrder(OrderId{3}, Side::Buy, Price{100}, Quantity{5});
+    EXPECT_EQ(LastTotal(listener, Side::Buy, Price{100}), 40);
+}
+
+TEST(OptimizedLevelTotals, CancelSubtractsTheCancelledOrderOnly) {
+    RecordingListener listener;
+    OptimizedOrderBook book(listener);
+    book.AddLimitOrder(OrderId{1}, Side::Buy, Price{100}, Quantity{10});
+    book.AddLimitOrder(OrderId{2}, Side::Buy, Price{100}, Quantity{25});
+    book.AddLimitOrder(OrderId{3}, Side::Buy, Price{100}, Quantity{5});
+
+    book.CancelOrder(OrderId{2});  // from the middle
+    EXPECT_EQ(LastTotal(listener, Side::Buy, Price{100}), 15);
+    book.CancelOrder(OrderId{1});  // the front
+    EXPECT_EQ(LastTotal(listener, Side::Buy, Price{100}), 5);
+    book.CancelOrder(OrderId{3});  // the last one -> level gone
+    EXPECT_EQ(LastTotal(listener, Side::Buy, Price{100}), 0);
+}
+
+TEST(OptimizedLevelTotals, PartialFillReducesTheTotalByTheTradedAmount) {
+    RecordingListener listener;
+    OptimizedOrderBook book(listener);
+    book.AddLimitOrder(OrderId{1}, Side::Sell, Price{100}, Quantity{30});
+    book.AddLimitOrder(OrderId{2}, Side::Sell, Price{100}, Quantity{20});
+    ASSERT_EQ(LastTotal(listener, Side::Sell, Price{100}), 50);
+
+    // Consumes all of #1 and part of #2.
+    book.AddLimitOrder(OrderId{3}, Side::Buy, Price{100}, Quantity{40});
+    EXPECT_EQ(LastTotal(listener, Side::Sell, Price{100}), 10);
+}
+
+TEST(OptimizedLevelTotals, ReduceRestingQuantityAdjustsTheTotal) {
+    RecordingListener listener;
+    OptimizedOrderBook book(listener);
+    book.AddLimitOrder(OrderId{1}, Side::Buy, Price{100}, Quantity{30});
+    book.AddLimitOrder(OrderId{2}, Side::Buy, Price{100}, Quantity{20});
+
+    book.ReduceRestingQuantity(OrderId{1}, Quantity{12});
+    EXPECT_EQ(LastTotal(listener, Side::Buy, Price{100}), 38);
+
+    book.ReduceRestingQuantity(OrderId{1}, Quantity{18});  // to zero -> removed
+    EXPECT_EQ(LastTotal(listener, Side::Buy, Price{100}), 20);
+}
+
+TEST(OptimizedLevelTotals, ModifyInPlaceAdjustsTheTotal) {
+    RecordingListener listener;
+    OptimizedOrderBook book(listener);
+    book.AddLimitOrder(OrderId{1}, Side::Buy, Price{100}, Quantity{30});
+    book.AddLimitOrder(OrderId{2}, Side::Buy, Price{100}, Quantity{20});
+
+    // Same price, reduced quantity -> in-place path, keeps queue position.
+    book.ModifyOrder(OrderId{1}, Price{100}, Quantity{5});
+    EXPECT_EQ(LastTotal(listener, Side::Buy, Price{100}), 25);
+}
+
+TEST(OptimizedLevelTotals, TotalsStayCorrectAcrossDeepChurn) {
+    // Long mixed sequence spanning several chunks, so compaction,
+    // chunk unlink and the in-place mutation paths all run. The
+    // expected total is tracked independently here.
+    RecordingListener listener;
+    OptimizedOrderBook book(listener);
+
+    std::int64_t expected = 0;
+    std::uint64_t next_id = 1;
+    std::vector<std::pair<std::uint64_t, std::int64_t>> live;
+
+    for (int i = 0; i < 40; ++i) {
+        const std::int64_t q = 1 + (i % 7);
+        book.AddLimitOrder(OrderId{next_id}, Side::Buy, Price{100}, Quantity{q});
+        live.emplace_back(next_id, q);
+        ++next_id;
+        expected += q;
+        ASSERT_EQ(LastTotal(listener, Side::Buy, Price{100}), expected) << "after add " << i;
+    }
+
+    // Cancel every third, from the middle outward.
+    for (std::size_t i = live.size(); i-- > 0;) {
+        if (i % 3 != 0) continue;
+        book.CancelOrder(OrderId{live[i].first});
+        expected -= live[i].second;
+        ASSERT_EQ(LastTotal(listener, Side::Buy, Price{100}), expected) << "after cancel " << i;
+    }
+
+    EXPECT_GT(expected, 0);
+    EXPECT_EQ(book.FullBook(Side::Buy).at(0).price, Price{100});
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <cstdint>
 #include <iterator>
 #include <map>
@@ -179,7 +180,8 @@ class OptimizedOrderBook {
               order_(other.order_),
               head_chunk_(other.head_chunk_),
               tail_chunk_(other.tail_chunk_),
-              size_(other.size_) {
+              size_(other.size_),
+              total_units_(other.total_units_) {
             bench::RecordLevelCreate();
         }
         LevelOrders& operator=(const LevelOrders& other) {
@@ -189,6 +191,7 @@ class OptimizedOrderBook {
             head_chunk_ = other.head_chunk_;
             tail_chunk_ = other.tail_chunk_;
             size_ = other.size_;
+            total_units_ = other.total_units_;
             return *this;
         }
         LevelOrders(LevelOrders&&) = default;
@@ -248,6 +251,50 @@ class OptimizedOrderBook {
         [[nodiscard]] bool empty() const { return size_ == 0; }
         [[nodiscard]] std::size_t size() const { return size_; }
 
+        // Aggregate resting quantity at this level, maintained
+        // INCREMENTALLY rather than recomputed.
+        //
+        // Every mutation point knows its own delta, so the total is O(1)
+        // to read instead of O(orders-in-level) to walk. That matters
+        // because OnBookUpdate fires after every add/cancel/reduce/fill
+        // (see BookListener), so the walk was on the hot path of every
+        // mutating operation -- cheap at this data's 1.2 orders/level,
+        // linear in depth on a deeper book, and multiplied by whatever
+        // the per-element iteration costs.
+        //
+        // THE RISK THIS CREATES, AND WHY THE ASSERT IS NOT OPTIONAL:
+        // a maintained total can silently DRIFT from reality if any
+        // mutation site forgets to adjust it. RunDifferential does not
+        // compare OnBookUpdate payloads (it compares fills, accept/reject,
+        // BestBid/BestAsk and FullBook), and CheckInvariants derives its
+        // resting total from FullBook by walking orders -- so neither
+        // would notice a wrong total_units_. That is the same shape of
+        // blind spot docs/phase5_readiness.md describes for arena
+        // use-after-free: correct-looking output, wrong program.
+        //
+        // So the debug build re-derives the sum and asserts they agree.
+        // O(n) in debug, O(1) in Release -- the tests, CI and the
+        // sanitizer jobs all run the checked form (ci.yml passes
+        // -UNDEBUG deliberately), the benchmark runs the fast one.
+        [[nodiscard]] Quantity Total([[maybe_unused]] const OrderArena& arena) const {
+#ifndef NDEBUG
+            std::int64_t walked = 0;
+            for (auto it = begin(arena); it != end(arena); ++it) {
+                walked += it->quantity.units;
+            }
+            assert(walked == total_units_ &&
+                   "level total drifted from the sum of its orders -- a mutation site failed to "
+                   "adjust it");
+#endif
+            return Quantity{total_units_};
+        }
+
+        // For mutations that change an order's quantity IN PLACE through
+        // a reference handed out by front()/an iterator, where this class
+        // never sees the write: partial fills in MatchAgainst,
+        // ModifyOrder's same-price reduce, ReduceRestingQuantity.
+        void AdjustTotal(std::int64_t delta) { total_units_ += delta; }
+
         // front()/pop_front() -- MatchAgainst's fill loop always trades
         // the oldest (FIFO) resting order first, same contract as
         // std::deque's.
@@ -261,9 +308,11 @@ class OptimizedOrderBook {
             if (mode_ != Mode::kOverflow) {
                 mode_ = Mode::kEmpty;  // was kInline; kEmpty->pop_front() is UB, matches deque
                 size_ = 0;
+                total_units_ = 0;
                 return;
             }
             OrderChunk& chunk = arena.Get(head_chunk_);
+            total_units_ -= chunk.orders[chunk.head].quantity.units;
             ++chunk.head;
             --chunk.count;
             --size_;
@@ -282,6 +331,7 @@ class OptimizedOrderBook {
                     order_ = order;
                     mode_ = Mode::kInline;
                     size_ = 1;
+                    total_units_ = order.quantity.units;
                     break;
                 case Mode::kInline: {
                     const ArenaHandle handle = arena.Allocate();
@@ -296,6 +346,7 @@ class OptimizedOrderBook {
                     tail_chunk_ = handle;
                     mode_ = Mode::kOverflow;
                     size_ = 2;
+                    total_units_ += order.quantity.units;
                     break;
                 }
                 case Mode::kOverflow: {
@@ -352,6 +403,7 @@ class OptimizedOrderBook {
                         tail_chunk_ = handle;
                     }
                     ++size_;
+                    total_units_ += order.quantity.units;
                     break;
                 }
             }
@@ -361,10 +413,12 @@ class OptimizedOrderBook {
             if (mode_ != Mode::kOverflow) {
                 mode_ = Mode::kEmpty;  // was kInline; erase on kEmpty is UB, matches deque
                 size_ = 0;
+                total_units_ = 0;
                 return end(arena);
             }
 
             OrderChunk& chunk = arena.Get(it.chunk_);
+            total_units_ -= chunk.orders[it.offset_].quantity.units;
             const std::uint8_t last = static_cast<std::uint8_t>(chunk.head + chunk.count - 1);
             for (std::uint8_t i = it.offset_; i < last; ++i) {
                 chunk.orders[i] = chunk.orders[i + 1];
@@ -414,6 +468,7 @@ class OptimizedOrderBook {
             tail_chunk_ = ArenaHandle{};
             mode_ = Mode::kEmpty;
             size_ = 0;
+            total_units_ = 0;
         }
 
         // Const-callable, but returns the same mutating iterator type via
@@ -459,6 +514,7 @@ class OptimizedOrderBook {
         ArenaHandle head_chunk_{};
         ArenaHandle tail_chunk_{};
         std::uint32_t size_ = 0;
+        std::int64_t total_units_ = 0;
     };
     using LevelQueue = LevelOrders;
 
