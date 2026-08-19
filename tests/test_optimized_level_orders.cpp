@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstdint>
+
 #include "lob/optimized_order_book.hpp"
 #include "test_listener.hpp"
 
@@ -144,4 +147,225 @@ TEST(OptimizedLevelOrders, CopyingTheBookDeepCopiesOverflowStorageIndependently)
     // was cancelled on the copy, so only order 2 remains resting on it).
     copy.CancelOrder(OrderId{2});
     EXPECT_FALSE(copy.BestAsk().has_value());
+}
+
+// ---------------------------------------------------------------------
+// Step 4: arena ownership.
+//
+// LevelOrders holds arena handles and CANNOT free its own chunks -- its
+// destructor has no arena reference. Every level erase site must call
+// Release() first. These tests assert that discipline directly, because
+// nothing else can: an unreleased chunk is a logical leak inside the
+// arena's free list, not a malloc leak, so ASan's leak checker never
+// sees it and a differential comparison never diverges because of it.
+// ---------------------------------------------------------------------
+
+TEST(OptimizedArenaOwnership, EmptyBookHoldsNoChunks) {
+    RecordingListener listener;
+    OptimizedOrderBook book(listener);
+    EXPECT_EQ(book.LiveOrderChunks(), 0u);
+}
+
+TEST(OptimizedArenaOwnership, ASingleOrderNeverTakesAChunk) {
+    RecordingListener listener;
+    OptimizedOrderBook book(listener);
+
+    book.AddLimitOrder(OrderId{1}, Side::Buy, Price{100}, Quantity{10});
+
+    EXPECT_EQ(book.LiveOrderChunks(), 0u)
+        << "the inline slot must still cover the one-order case -- that is step 2's whole win";
+}
+
+TEST(OptimizedArenaOwnership, SecondOrderTakesExactlyOneChunk) {
+    RecordingListener listener;
+    OptimizedOrderBook book(listener);
+
+    book.AddLimitOrder(OrderId{1}, Side::Buy, Price{100}, Quantity{10});
+    book.AddLimitOrder(OrderId{2}, Side::Buy, Price{100}, Quantity{10});
+
+    EXPECT_EQ(book.LiveOrderChunks(), 1u);
+}
+
+TEST(OptimizedArenaOwnership, CancellingEveryOrderReleasesEveryChunk) {
+    RecordingListener listener;
+    OptimizedOrderBook book(listener);
+
+    for (int i = 1; i <= 30; ++i) {
+        book.AddLimitOrder(OrderId{static_cast<std::uint64_t>(i)}, Side::Buy, Price{100},
+                           Quantity{10});
+    }
+    ASSERT_GT(book.LiveOrderChunks(), 0u) << "test needs the overflow path to be exercised";
+
+    for (int i = 1; i <= 30; ++i) {
+        book.CancelOrder(OrderId{static_cast<std::uint64_t>(i)});
+    }
+
+    EXPECT_TRUE(book.Empty());
+    EXPECT_EQ(book.LiveOrderChunks(), 0u) << "cancel path must Release before erasing the level";
+}
+
+TEST(OptimizedArenaOwnership, MatchingAwayEveryOrderReleasesEveryChunk) {
+    RecordingListener listener;
+    OptimizedOrderBook book(listener);
+
+    for (int i = 1; i <= 30; ++i) {
+        book.AddLimitOrder(OrderId{static_cast<std::uint64_t>(i)}, Side::Sell, Price{100},
+                           Quantity{10});
+    }
+    ASSERT_GT(book.LiveOrderChunks(), 0u);
+
+    // One aggressor large enough to consume the whole level.
+    book.AddLimitOrder(OrderId{999}, Side::Buy, Price{100}, Quantity{300});
+
+    EXPECT_TRUE(book.Empty());
+    EXPECT_EQ(book.LiveOrderChunks(), 0u) << "MatchAgainst must Release before erasing the level";
+}
+
+TEST(OptimizedArenaOwnership, ChunksSpanMoreThanOneChunkAndStillFullyRelease) {
+    RecordingListener listener;
+    OptimizedOrderBook book(listener);
+
+    // Comfortably past OrderChunk::kCapacity (8) so the chain is several
+    // chunks long, exercising the link/unlink paths rather than just the
+    // single-chunk case the real SPY data reaches.
+    constexpr int kOrders = 50;
+    for (int i = 1; i <= kOrders; ++i) {
+        book.AddLimitOrder(OrderId{static_cast<std::uint64_t>(i)}, Side::Buy, Price{100},
+                           Quantity{10});
+    }
+    EXPECT_GE(book.LiveOrderChunks(), 5u) << "50 orders must chain multiple 8-slot chunks";
+
+    // Cancel from the MIDDLE outward, so chunks empty out of order and
+    // the unlink-a-non-head-chunk path actually runs.
+    for (int i = 25; i <= kOrders; ++i) {
+        book.CancelOrder(OrderId{static_cast<std::uint64_t>(i)});
+    }
+    for (int i = 1; i < 25; ++i) {
+        book.CancelOrder(OrderId{static_cast<std::uint64_t>(i)});
+    }
+
+    EXPECT_TRUE(book.Empty());
+    EXPECT_EQ(book.LiveOrderChunks(), 0u);
+}
+
+TEST(OptimizedArenaOwnership, RepeatedFillAndDrainCyclesDoNotAccumulateChunks) {
+    RecordingListener listener;
+    OptimizedOrderBook book(listener);
+
+    std::size_t peak = 0;
+    std::uint64_t next_id = 1;
+    for (int round = 0; round < 100; ++round) {
+        for (int i = 0; i < 12; ++i) {
+            book.AddLimitOrder(OrderId{next_id++}, Side::Buy, Price{100}, Quantity{10});
+        }
+        peak = std::max(peak, book.LiveOrderChunks());
+        // Drain the level entirely via an aggressor.
+        book.AddLimitOrder(OrderId{next_id++}, Side::Sell, Price{100}, Quantity{120});
+        ASSERT_TRUE(book.Empty()) << "round " << round;
+        ASSERT_EQ(book.LiveOrderChunks(), 0u) << "round " << round;
+    }
+
+    EXPECT_GT(peak, 0u) << "test needs the overflow path";
+}
+
+TEST(OptimizedArenaOwnership, CopiedBookHasIndependentArenaStorage) {
+    RecordingListener listener;
+    OptimizedOrderBook book(listener);
+    for (int i = 1; i <= 5; ++i) {
+        book.AddLimitOrder(OrderId{static_cast<std::uint64_t>(i)}, Side::Buy, Price{100},
+                           Quantity{10});
+    }
+    ASSERT_EQ(book.LiveOrderChunks(), 1u);
+
+    // This is exactly what bench_matching_engine does before every timed
+    // variant (`pass_book = warmup_book`), so it is not a hypothetical.
+    RecordingListener copy_listener;
+    OptimizedOrderBook copy = book;
+    ASSERT_EQ(copy.LiveOrderChunks(), 1u);
+
+    const auto before = book.FullBook(Side::Buy);
+
+    // Drain the copy completely; the original must be untouched.
+    for (int i = 1; i <= 5; ++i) {
+        copy.CancelOrder(OrderId{static_cast<std::uint64_t>(i)});
+    }
+    EXPECT_TRUE(copy.Empty());
+    EXPECT_EQ(copy.LiveOrderChunks(), 0u);
+
+    EXPECT_FALSE(book.Empty()) << "the copy must not have shared the original's chunks";
+    EXPECT_EQ(book.LiveOrderChunks(), 1u);
+    const auto after = book.FullBook(Side::Buy);
+    ASSERT_EQ(after.size(), before.size());
+    ASSERT_EQ(after[0].orders.size(), 5u);
+    for (std::size_t i = 0; i < after[0].orders.size(); ++i) {
+        EXPECT_EQ(after[0].orders[i].id, before[0].orders[i].id);
+    }
+}
+
+// Chunk count must stay proportional to a level's DEPTH, not to the
+// number of operations that have flowed through it.
+//
+// Honest scope note: this does NOT fail if push_back's compaction is
+// removed -- verified by disabling it and re-running. Chunk count is
+// bounded either way (only the head chunk is pop_front'ed, so a
+// multi-chunk level has tail.head == 0 and compaction is a no-op; a
+// single-chunk level just oscillates 1<->2 chunks as the drained one is
+// freed). It is kept because the bound it asserts is real and easy for a
+// future change to break -- e.g. dropping the "free a chunk once it
+// drains" branch in pop_front would make this grow without limit while
+// every output-comparison test still passed.
+TEST(OptimizedArenaOwnership, ChunkCountTracksDepthNotOperationCount) {
+    RecordingListener listener;
+    OptimizedOrderBook book(listener);
+
+    // Drain via MATCHING, not cancelling: cancel goes through erase(),
+    // which shifts survivors down and never lets head drift, so only the
+    // fill path in MatchAgainst exercises pop_front at all.
+    constexpr int kResident = 6;
+    constexpr int kQty = 10;
+    std::uint64_t next_id = 1;
+    for (int i = 0; i < kResident; ++i) {
+        book.AddLimitOrder(OrderId{next_id++}, Side::Sell, Price{100}, Quantity{kQty});
+    }
+
+    std::size_t peak_chunks = book.LiveOrderChunks();
+    for (int i = 0; i < 500; ++i) {
+        // Aggressor consumes exactly the front resting order -> pop_front.
+        book.AddLimitOrder(OrderId{next_id++}, Side::Buy, Price{100}, Quantity{kQty});
+        book.AddLimitOrder(OrderId{next_id++}, Side::Sell, Price{100}, Quantity{kQty});
+        peak_chunks = std::max(peak_chunks, book.LiveOrderChunks());
+    }
+
+    EXPECT_LE(peak_chunks, 2u) << "1000 ops through a 6-deep level must not accumulate chunks";
+    EXPECT_EQ(book.FullBook(Side::Sell).at(0).orders.size(), static_cast<std::size_t>(kResident));
+}
+
+TEST(OptimizedArenaOwnership, CompactionPreservesFifoOrder) {
+    // Compaction moves live elements inside a chunk. If it got the copy
+    // direction or bounds wrong, order would scramble -- and price-time
+    // priority is the one thing this engine must never get wrong.
+    RecordingListener listener;
+    OptimizedOrderBook book(listener);
+
+    std::uint64_t next_id = 1;
+    for (int i = 0; i < 5; ++i) {
+        book.AddLimitOrder(OrderId{next_id++}, Side::Sell, Price{100}, Quantity{10});
+    }
+    // Drain some from the front, then push more -- forcing compaction.
+    for (int i = 0; i < 3; ++i) {
+        book.CancelOrder(OrderId{static_cast<std::uint64_t>(i + 1)});
+    }
+    for (int i = 0; i < 5; ++i) {
+        book.AddLimitOrder(OrderId{next_id++}, Side::Sell, Price{100}, Quantity{10});
+    }
+
+    const auto levels = book.FullBook(Side::Sell);
+    ASSERT_EQ(levels.size(), 1u);
+    const auto& orders = levels[0].orders;
+    ASSERT_EQ(orders.size(), 7u);
+    // Surviving originals (4, 5) first, then the five new ones in order.
+    const std::uint64_t expected[] = {4, 5, 6, 7, 8, 9, 10};
+    for (std::size_t i = 0; i < orders.size(); ++i) {
+        EXPECT_EQ(orders[i].id, OrderId{expected[i]}) << "FIFO position " << i;
+    }
 }

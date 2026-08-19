@@ -17,6 +17,31 @@ option(LOB_ENABLE_SANITIZERS "Build with AddressSanitizer + UndefinedBehaviorSan
 # overhead. Turn ON only for a dedicated churn-diagnostic run.
 option(LOB_TRACK_CHURN "Instrument OptimizedOrderBook's level/order-storage allocation churn" OFF)
 
+# Generation-tagged arena handles (see include/lob/arena.hpp). ON by
+# default -- tests, CI, and the sanitizer jobs all want them, because
+# they turn an arena use-after-free from a memory-safety bug visible only
+# under ASan into an ordinary detected error the normal differential and
+# invariant tests catch on every push.
+#
+# Benchmark runs must configure a SEPARATE build directory with
+# -DLOB_ARENA_GENERATION_TAGS=OFF, the same way the churn diagnostic uses
+# its own -DLOB_TRACK_CHURN=ON tree. It cannot be per-target within one
+# build: lob_optimized_engine propagates this PUBLIC (see below), so every
+# target in a given build tree necessarily agrees on it -- which is the
+# point, since a per-TU mismatch would be silent rather than a link error.
+#
+# bench_matching_engine prints the setting in its run header and flags a
+# tagged build as not-comparable, so a benchmark number can never quietly
+# be produced with the check compiled in.
+#
+# That the benchmark binary is untagged is also exactly why
+# docs/phase5_plan.md keeps the untagged ASan nightly as the gate for
+# arena work rather than treating a green per-push run as sufficient: the
+# binary this project publishes numbers about is not the binary CI
+# exercises. See docs/phase5_readiness.md for how the two mechanisms
+# divide the work.
+option(LOB_ARENA_GENERATION_TAGS "Validate arena handle generations on every dereference" ON)
+
 add_library(lob_engine
   src/order_book.cpp
 )
@@ -143,6 +168,14 @@ target_include_directories(lob_optimized_engine PUBLIC include)
 target_compile_features(lob_optimized_engine PUBLIC cxx_std_20)
 target_compile_options(lob_optimized_engine PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(lob_optimized_engine PUBLIC lob_bench)
+# PUBLIC for the same reason as LOB_TRACK_CHURN above: arena.hpp is a
+# header, so every TU that includes it must agree on whether generation
+# checking is compiled in. A mismatch would not be a link error here (the
+# tag lives in a struct field that exists either way), it would be a
+# silent disagreement about whether Get() validates -- far worse. Setting
+# it once, PUBLIC, on the library everything goes through prevents that.
+target_compile_definitions(lob_optimized_engine
+  PUBLIC LOB_ARENA_GENERATION_TAGS=$<BOOL:${LOB_ARENA_GENERATION_TAGS}>)
 
 if(LOB_ENABLE_SANITIZERS)
   target_compile_options(lob_optimized_engine PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)

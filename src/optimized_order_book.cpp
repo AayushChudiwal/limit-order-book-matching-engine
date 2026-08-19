@@ -9,10 +9,10 @@ namespace {
 constexpr Side Opposite(Side side) { return side == Side::Buy ? Side::Sell : Side::Buy; }
 }  // namespace
 
-Quantity OptimizedOrderBook::SumLevel(const LevelQueue& level) {
+Quantity OptimizedOrderBook::SumLevel(const LevelQueue& level) const {
     Quantity total{0};
-    for (const auto& order : level) {
-        total += order.quantity;
+    for (auto it = level.begin(order_arena_); it != level.end(order_arena_); ++it) {
+        total += it->quantity;
     }
     return total;
 }
@@ -28,7 +28,7 @@ OptimizedOrderBook::LevelQueue* OptimizedOrderBook::LevelFor(Side side, Price pr
 
 OptimizedOrderBook::LevelQueue::iterator OptimizedOrderBook::FindOrderInLevel(LevelQueue& level,
                                                                               OrderId id) {
-    return std::find_if(level.begin(), level.end(),
+    return std::find_if(level.begin(order_arena_), level.end(order_arena_),
                         [id](const RestingOrder& o) { return o.id == id; });
 }
 
@@ -38,6 +38,10 @@ void OptimizedOrderBook::PruneAndEmitLevelUpdate(Side side, Price price) {
         assert(it != bids_.end() &&
                "level must still exist immediately after removing an order from it");
         if (it->second.empty()) {
+            // Release BEFORE erase: the level's destructor cannot free
+            // its arena chunks (see LevelOrders' class comment), so this
+            // is the only thing standing between an erase and a leak.
+            it->second.Release(order_arena_);
             bids_.erase(it);
             listener_.OnBookUpdate(side, price, Quantity{0});
         } else {
@@ -48,6 +52,7 @@ void OptimizedOrderBook::PruneAndEmitLevelUpdate(Side side, Price price) {
         assert(it != asks_.end() &&
                "level must still exist immediately after removing an order from it");
         if (it->second.empty()) {
+            it->second.Release(order_arena_);
             asks_.erase(it);
             listener_.OnBookUpdate(side, price, Quantity{0});
         } else {
@@ -58,7 +63,7 @@ void OptimizedOrderBook::PruneAndEmitLevelUpdate(Side side, Price price) {
 
 void OptimizedOrderBook::RestOrder(OrderId id, Side side, Price price, Quantity quantity) {
     LevelQueue& level = side == Side::Buy ? bids_[price] : asks_[price];
-    level.push_back(RestingOrder{id, quantity});
+    level.push_back(order_arena_, RestingOrder{id, quantity});
     locations_[id] = Location{side, price};
     listener_.OnOrderAccepted(id);
     listener_.OnBookUpdate(side, price, SumLevel(level));
@@ -68,9 +73,10 @@ Quantity OptimizedOrderBook::RemoveFromLevel(Side side, Price price, OrderId id)
     LevelQueue* level = LevelFor(side, price);
     assert(level != nullptr && "locations_ points at a level that doesn't exist");
     auto it = FindOrderInLevel(*level, id);
-    assert(it != level->end() && "locations_ points at an order that isn't in its level");
+    assert(it != level->end(order_arena_) &&
+           "locations_ points at an order that isn't in its level");
     const Quantity quantity = it->quantity;
-    level->erase(it);
+    level->erase(order_arena_, it);
     return quantity;
 }
 
@@ -87,7 +93,7 @@ Quantity OptimizedOrderBook::MatchAgainst(OppositeMap& opposite, OrderId aggress
 
         LevelQueue& queue = level_it->second;
         while (remaining.units > 0 && !queue.empty()) {
-            RestingOrder& resting = queue.front();
+            RestingOrder& resting = queue.front(order_arena_);
             const Quantity traded{std::min(remaining.units, resting.quantity.units)};
 
             listener_.OnFill(Fill{aggressor_id, resting.id, aggressor_side, level_price, traded});
@@ -96,7 +102,7 @@ Quantity OptimizedOrderBook::MatchAgainst(OppositeMap& opposite, OrderId aggress
 
             if (resting.quantity.units == 0) {
                 locations_.erase(resting.id);
-                queue.pop_front();
+                queue.pop_front(order_arena_);
             }
         }
 
@@ -104,6 +110,9 @@ Quantity OptimizedOrderBook::MatchAgainst(OppositeMap& opposite, OrderId aggress
         listener_.OnBookUpdate(Opposite(aggressor_side), level_price,
                                level_now_empty ? Quantity{0} : SumLevel(queue));
         if (level_now_empty) {
+            // Same ownership rule as PruneAndEmitLevelUpdate: chunks must
+            // be released before the level is erased.
+            level_it->second.Release(order_arena_);
             opposite.erase(level_it);
         }
     }
@@ -188,7 +197,7 @@ void OptimizedOrderBook::ModifyOrder(OrderId id, Price new_price, Quantity new_q
     LevelQueue* level = LevelFor(loc.side, loc.price);
     assert(level != nullptr);
     auto order_it = FindOrderInLevel(*level, id);
-    assert(order_it != level->end());
+    assert(order_it != level->end(order_arena_));
 
     const bool same_price = new_price == loc.price;
     const bool quantity_reduced_or_equal = new_quantity.units <= order_it->quantity.units;
@@ -200,7 +209,7 @@ void OptimizedOrderBook::ModifyOrder(OrderId id, Price new_price, Quantity new_q
         return;
     }
 
-    level->erase(order_it);
+    level->erase(order_arena_, order_it);
     locations_.erase(it);
     PruneAndEmitLevelUpdate(loc.side, loc.price);
 
@@ -221,7 +230,7 @@ void OptimizedOrderBook::ReduceRestingQuantity(OrderId id, Quantity amount) {
     LevelQueue* level = LevelFor(loc.side, loc.price);
     assert(level != nullptr);
     auto order_it = FindOrderInLevel(*level, id);
-    assert(order_it != level->end());
+    assert(order_it != level->end(order_arena_));
 
     if (order_it->quantity.units < amount.units) {
         listener_.OnOrderRejected(id, RejectReason::InsufficientQuantity);
@@ -230,7 +239,7 @@ void OptimizedOrderBook::ReduceRestingQuantity(OrderId id, Quantity amount) {
 
     order_it->quantity -= amount;
     if (order_it->quantity.units == 0) {
-        level->erase(order_it);
+        level->erase(order_arena_, order_it);
         locations_.erase(it);
     }
     PruneAndEmitLevelUpdate(loc.side, loc.price);
@@ -268,12 +277,12 @@ std::vector<PriceLevel> OptimizedOrderBook::TopLevels(Side side, int depth) cons
 
 std::vector<FullPriceLevel> OptimizedOrderBook::FullBook(Side side) const {
     std::vector<FullPriceLevel> levels;
-    auto append = [&levels](const auto& level_map) {
+    auto append = [&levels, this](const auto& level_map) {
         for (const auto& [price, queue] : level_map) {
             FullPriceLevel level{price, {}};
             level.orders.reserve(queue.size());
-            for (const auto& order : queue) {
-                level.orders.push_back({order.id, order.quantity});
+            for (auto it = queue.begin(order_arena_); it != queue.end(order_arena_); ++it) {
+                level.orders.push_back({it->id, it->quantity});
             }
             levels.push_back(std::move(level));
         }

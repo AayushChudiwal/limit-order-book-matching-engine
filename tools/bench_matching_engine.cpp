@@ -90,6 +90,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "lob/arena.hpp"
 #include "lob/bench/churn.hpp"
 #include "lob/bench/frequency.hpp"
 #include "lob/bench/pmu.hpp"
@@ -383,6 +384,19 @@ int Run(int argc, char** argv) {
     std::printf("=== bench_matching_engine ===\n");
     std::printf("CPU: %s\n", pmu.CpuString().c_str());
     std::printf("calibrated frequency this run: %.3f GHz\n", ghz);
+    // Printed every run, never inferred. Generation-tag validation costs
+    // a branch on every arena dereference, so a number produced with it
+    // ON is not comparable to this project's published baselines -- and
+    // the tags default to ON everywhere else precisely because they are
+    // wanted for tests and CI. Making the build's choice visible in the
+    // run log is what stops a tagged binary from quietly contributing a
+    // "slow" result to a benchmark table. Configure a benchmark build
+    // with -DLOB_ARENA_GENERATION_TAGS=OFF.
+    std::printf("arena generation tags: %s%s\n",
+                LOB_ARENA_GENERATION_TAGS ? "ON" : "OFF",
+                LOB_ARENA_GENERATION_TAGS
+                    ? "  *** WARNING: not a benchmark-shaped build, numbers not comparable ***"
+                    : "");
 
     lob::itch::MappedFile file(args.itch_path);
     const auto data = file.data();

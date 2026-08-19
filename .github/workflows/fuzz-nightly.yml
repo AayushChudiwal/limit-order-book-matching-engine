@@ -10,7 +10,9 @@ name: Fuzz nightly
 #
 #   volume     -- unsanitized, maximum seed/op coverage. Finds logic bugs
 #                 and divergence by sheer breadth. ~2h.
-#   sanitized  -- ASan + UBSan at reduced volume. This is the job
+#   sanitized  -- ASan + UBSan at reduced volume, with arena generation
+#                 tags OFF so it exercises the same shape of binary the
+#                 benchmark publishes numbers about. This is the job
 #                 docs/phase5_readiness.md names as the ONLY thing that
 #                 catches an arena use-after-free, which is invisible to a
 #                 behavioural differential test by construction ("correct
@@ -86,7 +88,7 @@ jobs:
       # anything on your behalf.
 
   sanitized:
-    name: Soak -- sanitized (ASan + UBSan)
+    name: Soak -- sanitized, UNTAGGED arena (ASan + UBSan)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -95,11 +97,28 @@ jobs:
       # sanitizers job: RelWithDebInfo defines NDEBUG, which would compile
       # out the asserts that catch a corrupted internal index before it
       # becomes plausible-looking output. Do not remove it.
+      #
+      # LOB_ARENA_GENERATION_TAGS=OFF is what makes this job the thing
+      # docs/phase5_plan.md's standing requirement actually asks for, and
+      # it is the ONE place in CI that turns them off. Everywhere else --
+      # including ci.yml's per-push sanitized sweep -- runs tagged, where
+      # a stale arena handle is a detected engine error. That is the fast
+      # catcher, but it only protects the TAGGED binary.
+      #
+      # The binary this project publishes cycle numbers about is untagged
+      # (bench_matching_engine builds with tags off), so it is a different
+      # program, and "the tagged build is clean" is not evidence about it.
+      # This job runs the untagged program under ASan/UBSan so the
+      # release-shaped binary gets memory-safety verification that does
+      # not depend on the mechanism being compiled in. Turning tags ON
+      # here would silently delete that coverage while the job still went
+      # green.
       - name: Configure
         run: >
           cmake -S . -B build-san
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
           -DLOB_ENABLE_SANITIZERS=ON
+          -DLOB_ARENA_GENERATION_TAGS=OFF
           -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g -UNDEBUG"
 
       - name: Build

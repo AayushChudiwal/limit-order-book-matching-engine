@@ -33,6 +33,7 @@ add_executable(lob_tests
   test_itch_integrity_checker.cpp
   test_bench_stats.cpp
   test_optimized_level_orders.cpp
+  test_arena.cpp
 )
 target_link_libraries(lob_tests PRIVATE lob_itch lob_fuzz lob_bench lob_optimized_engine GTest::gtest_main)
 target_compile_options(lob_tests PRIVATE -Wall -Wextra -Wpedantic)
