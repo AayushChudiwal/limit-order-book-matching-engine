@@ -352,3 +352,69 @@ Both are fully deterministic given the fixed seed and the (fixed, given
 the same file) real data -- confirmed by the 10 SPY runs replaying
 identical warmup/op counts every time. Run-to-run differences are pure
 measurement noise, captured in the table above.
+
+## Fuzz sweep cost: superlinear in op count, and why that shapes CI budgets
+
+This section is about `tools/fuzz_soak.cpp`, not the PMU benchmark, but
+it belongs here because it is a measurement result that will be
+re-derived badly every time someone extends a sweep.
+
+**Sweep runtime is superlinear in `op_count` -- roughly O(ops^1.7).**
+Measured per `(profile, seed)` combination on the M4, sanitized build
+(RelWithDebInfo + ASan/UBSan + `-UNDEBUG`):
+
+| ops | mode A (invariants) | mode B (differential) | B/A |
+|---:|---:|---:|---:|
+| 2,000 | 0.092 s | 0.230 s | 2.5x |
+| 5,000 | 0.370 s | 0.961 s | 2.6x |
+| 10,000 | 1.120 s | 2.980 s | 2.7x |
+| 30,000 | 9.590 s | 24.940 s | 2.6x |
+
+15x the ops costs ~104x the time.
+
+**Mechanism**: `CheckInvariants` runs after *every* op, and its cost
+scales with current book size -- it walks `FullBook()` on both sides to
+check level ordering, emptiness, and duplicate ids. So each additional
+op is both one more op *and* a slightly more expensive check than the
+one before it. The differential mode carries the same shape at a
+consistent ~2.6x, since it does that work against two engines.
+
+**Consequence, which is counterintuitive**: to buy more coverage per
+unit of CI time, widen `seed_count`, do not deepen `op_count`. Running
+*both* modes at 2,000 ops costs less runner time (~92 s) than running
+*one* mode at 5,000 ops (~107 s), while covering both failure classes.
+That is why `ci.yml`'s per-push sanitized sweep is deliberately shallow
+and wide rather than the reverse.
+
+For memory-safety work the same conclusion holds on its own terms,
+independent of cost: a use-after-free is triggered by hitting the right
+*shape* of operation sequence, not by running longer.
+
+### Two calibration numbers worth keeping
+
+- **Sanitizer overhead**: 6.9x (mode A), 8.4x (mode B), on
+  RelWithDebInfo. Against a `Debug` build it is ~28x -- which is why the
+  sanitizer jobs use RelWithDebInfo plus an explicit `-UNDEBUG` to keep
+  `assert()` alive rather than `Debug`. Dropping the asserts to buy
+  speed would remove the checks those jobs exist to run.
+- **GitHub runner vs this M4: ~2.4x slower.** Derived, not guessed: the
+  nightly soak's 1,500 combos at 30,000 ops took 84 min on the runner
+  (3.36 s/combo) against 1.38 s/combo measured locally for identical
+  work. Multiply local timings by ~2.4 when sizing a CI budget.
+
+### The generator-coverage assertion needs volume
+
+`fuzz_soak`'s "every op category was exercised" check is a claim about
+the generator *at volume*, not about any single run, and it fails
+constantly on healthy code when a run is short. Seeds 0-39, counting
+seeds reporting at least one zero category:
+
+| ops | 2,000 | 3,000 | 5,000 | 8,000 | 10,000 | 20,000 | 30,000 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| seeds with gaps | 24/40 | 12/40 | 8/40 | 4/40 | 3/40 | 0/40 | 0/40 |
+
+At 2,000 ops it would flag 60% of seeds. Hence `kCoverageCheckMinOps`
+(20,000) in `tools/fuzz_soak.cpp`: the check is gated to runs long
+enough for it to mean something, and the tool prints whether it was
+ENFORCED or SKIPPED so a green short sweep is never mistaken for full
+generator coverage.

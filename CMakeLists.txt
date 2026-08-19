@@ -179,7 +179,12 @@ target_compile_options(fuzz_mutation_test PRIVATE -Wall -Wextra -Wpedantic)
 add_executable(fuzz_soak
   tools/fuzz_soak.cpp
 )
-target_link_libraries(fuzz_soak PRIVATE lob_fuzz)
+# lob_optimized_engine as well as lob_fuzz: the soak gained a differential
+# mode (OrderBook vs OptimizedOrderBook) and an invariant mode pointed at
+# the optimized engine. Before that it linked only lob_fuzz, which is why
+# it could not diff against Phase 5's engine at all -- see the header
+# comment in tools/fuzz_soak.cpp.
+target_link_libraries(fuzz_soak PRIVATE lob_fuzz lob_optimized_engine)
 target_compile_options(fuzz_soak PRIVATE -Wall -Wextra -Wpedantic)
 
 # The three PMU-dependent tools. Apple-only for the same reason

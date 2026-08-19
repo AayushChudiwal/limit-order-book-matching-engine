@@ -1,19 +1,37 @@
 name: Fuzz nightly
 
-# The long, randomized-seed soak job -- separate from ci.yml deliberately:
+# The long, randomized-seed soak -- separate from ci.yml deliberately:
 # this runs at a scale (hundreds of seeds, tens of thousands of ops each)
-# that would make every push wait minutes for something that doesn't need
-# to be fast, only thorough. See tools/fuzz_soak.cpp for what it actually
-# checks (property invariants + determinism, since Phase 5's second real
-# engine doesn't exist yet for a true differential sweep).
+# that would make every push wait for something that needs to be thorough,
+# not fast. See tools/fuzz_soak.cpp's header for what each mode checks and
+# why neither subsumes the other.
+#
+# Two jobs, run in parallel, with different purposes:
+#
+#   volume     -- unsanitized, maximum seed/op coverage. Finds logic bugs
+#                 and divergence by sheer breadth. ~2h.
+#   sanitized  -- ASan + UBSan at reduced volume. This is the job
+#                 docs/phase5_readiness.md names as the ONLY thing that
+#                 catches an arena use-after-free, which is invisible to a
+#                 behavioural differential test by construction ("correct
+#                 output, broken program"). ~1h.
+#
+# STANDING REQUIREMENT (docs/phase5_plan.md, step 4 onward): a commit that
+# changes memory ownership -- the arena allocator above all -- does not
+# count as landed until the `sanitized` job below has run clean on it at
+# least once. A green per-push check is NOT sufficient evidence for that
+# class of change: the per-push sweep is 40 seeds x 2,000 ops, deliberately
+# shallow, and the whole reason this nightly exists is that the failure
+# mode in question produces correct-looking output.
 on:
   schedule:
     - cron: '0 8 * * *' # daily, 08:00 UTC
-  workflow_dispatch: {} # manual trigger, e.g. to re-run after a fix
+  workflow_dispatch: {} # manual trigger, e.g. to re-run after a fix or to
+                        # satisfy the standing requirement above on demand
 
 jobs:
-  soak:
-    name: Long randomized-seed soak
+  volume:
+    name: Soak -- volume (unsanitized, max coverage)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,23 +40,93 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build build --config Release -j --target fuzz_soak
+        run: cmake --build build -j --target fuzz_soak
 
       # A fresh, still fully-reproducible seed range every run: offset by
       # (run number * 500) so consecutive scheduled runs explore new
-      # ground instead of re-checking the same 500 seeds forever, while
-      # `./fuzz_soak <offset> 500 30000` stays exactly reproducible if
-      # this specific run ever needs to be repeated locally.
-      - name: Run long soak (property invariants + determinism, many seeds)
+      # ground instead of re-checking the same seeds forever, while
+      # `fuzz_soak <mode> <offset> <count> <ops>` stays exactly
+      # reproducible locally if a specific run needs repeating.
+      #
+      # 30,000 ops is also above kCoverageCheckMinOps, so these runs (not
+      # the shallow per-push ones) are what actually enforce the
+      # generator-coverage assertion.
+
+      # Primary target: the engine that every remaining Phase 5 step
+      # mutates. This tool used to run the REFERENCE engine here, which
+      # docs/phase5_plan.md freezes for the rest of Phase 5 -- i.e. the
+      # long sweep was testing code that was not changing.
+      - name: Invariants -- OptimizedOrderBook (500 seeds x 30k ops)
         run: |
           OFFSET=$(( ${{ github.run_number }} * 500 ))
           echo "seed offset: $OFFSET"
-          ./build/fuzz_soak "$OFFSET" 500 30000
+          ./build/fuzz_soak invariant-optimized "$OFFSET" 500 30000
 
-      # If this ever fails: the failing seed(s) are in the job log above.
-      # Per the brief, any newly discovered failing seed should be
-      # shrunk (via the same Shrink() used in fuzz_mutation_test /
+      - name: Differential -- OrderBook vs OptimizedOrderBook (100 seeds x 30k ops)
+        run: |
+          OFFSET=$(( ${{ github.run_number }} * 500 ))
+          ./build/fuzz_soak differential "$OFFSET" 100 30000
+
+      # Small, but not optional. OrderBook is the ground truth every
+      # differential comparison is measured against: if the reference
+      # itself violated an invariant, every mode-B result silently becomes
+      # meaningless and nothing else in this repo would flag it. Cheap
+      # insurance against a whole class of false confidence.
+      - name: Invariants -- OrderBook reference guard (50 seeds x 30k ops)
+        run: |
+          OFFSET=$(( ${{ github.run_number }} * 500 ))
+          ./build/fuzz_soak invariant-reference "$OFFSET" 50 30000
+
+      # If any step above fails: the failing seed(s) are in the job log.
+      # Per the brief, a newly discovered failing seed should be shrunk
+      # (via the same Shrink() used in fuzz_mutation_test /
       # test_fuzz_shrinker.cpp) and committed as a permanent regression
       # test in tests/test_fuzz_shrunk_regressions.cpp -- this job's only
       # responsibility is to find it and fail loudly, not to auto-commit
       # anything on your behalf.
+
+  sanitized:
+    name: Soak -- sanitized (ASan + UBSan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # -UNDEBUG is load-bearing here for the same reason as in ci.yml's
+      # sanitizers job: RelWithDebInfo defines NDEBUG, which would compile
+      # out the asserts that catch a corrupted internal index before it
+      # becomes plausible-looking output. Do not remove it.
+      - name: Configure
+        run: >
+          cmake -S . -B build-san
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DLOB_ENABLE_SANITIZERS=ON
+          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g -UNDEBUG"
+
+      - name: Build
+        run: cmake --build build-san -j --target fuzz_soak
+
+      # 10,000 ops rather than 30,000: sanitizers cost ~7-8x, and runtime
+      # is superlinear in op_count (~O(ops^1.7)), so 10k buys roughly 9x
+      # the seed count for the same wall clock. For memory safety that is
+      # the right trade -- a use-after-free is triggered by hitting the
+      # right shape of sequence, not by running longer.
+      #
+      # Note this is below kCoverageCheckMinOps, so these runs do not
+      # enforce the generator-coverage assertion; the `volume` job's 30k
+      # runs do. That is intentional, not an oversight.
+      - name: Sanitized differential (120 seeds x 10k ops)
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1,halt_on_error=1
+        run: |
+          OFFSET=$(( ${{ github.run_number }} * 500 ))
+          echo "seed offset: $OFFSET"
+          ./build-san/fuzz_soak differential "$OFFSET" 120 10000
+
+      - name: Sanitized invariants -- OptimizedOrderBook (120 seeds x 10k ops)
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1,halt_on_error=1
+        run: |
+          OFFSET=$(( ${{ github.run_number }} * 500 ))
+          ./build-san/fuzz_soak invariant-optimized "$OFFSET" 120 10000

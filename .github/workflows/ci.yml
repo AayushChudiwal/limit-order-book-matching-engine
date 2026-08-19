@@ -102,3 +102,62 @@ jobs:
       # engine change.
       - name: Run mutation test (must catch all 7 bugs in every seed)
         run: ./build/fuzz_mutation_test
+
+  fuzz-sanitized:
+    name: Phase 3 fuzz -- sanitized sweep (ASan + UBSan, both modes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same build shape as the `sanitizers` job above, and -UNDEBUG is
+      # load-bearing for the same reason -- see that job's comment. The
+      # asserts are a large part of what this sweep is FOR: they are the
+      # only in-process check that catches a corrupted internal index
+      # before it turns into plausible-looking output.
+      - name: Configure
+        run: >
+          cmake -S . -B build-san
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DLOB_ENABLE_SANITIZERS=ON
+          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g -UNDEBUG"
+
+      - name: Build
+        run: cmake --build build-san -j --target fuzz_soak
+
+      # BOTH modes, deliberately shallow (2,000 ops) rather than one mode
+      # deeper. Two reasons, both measured:
+      #
+      # 1. Cost is superlinear in op_count -- roughly O(ops^1.7), because
+      #    CheckInvariants runs after every op and scales with book size
+      #    (see docs/benchmark_methodology.md, "Fuzz sweep cost"). Running
+      #    both modes at 2,000 ops costs ~92s of runner time; running one
+      #    mode at 5,000 ops costs ~107s. Both-shallower is strictly
+      #    cheaper AND covers both failure classes.
+      # 2. For memory safety specifically, seed breadth beats depth: a
+      #    use-after-free is triggered by hitting the right SHAPE of
+      #    sequence, not by running longer.
+      #
+      # Neither mode subsumes the other -- a differential is blind to a
+      # bug both engines share (they forked; shared-ancestry bugs are
+      # live), and invariants are blind to divergence that leaves both
+      # books well-formed. See tools/fuzz_soak.cpp's header.
+      #
+      # Seeds are offset by the run number so consecutive pushes explore
+      # fresh ground, while `fuzz_soak <mode> <offset> 40 2000` stays
+      # exactly reproducible locally for any offset in the log.
+      - name: Sanitized sweep -- invariants on OptimizedOrderBook
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1,halt_on_error=1
+        run: |
+          OFFSET=$(( ${{ github.run_number }} * 40 ))
+          echo "seed offset: $OFFSET"
+          ./build-san/fuzz_soak invariant-optimized "$OFFSET" 40 2000
+
+      - name: Sanitized sweep -- differential (OrderBook vs OptimizedOrderBook)
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1,halt_on_error=1
+        run: |
+          OFFSET=$(( ${{ github.run_number }} * 40 ))
+          ./build-san/fuzz_soak differential "$OFFSET" 40 2000
