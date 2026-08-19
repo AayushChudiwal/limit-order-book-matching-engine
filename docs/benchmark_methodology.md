@@ -397,10 +397,23 @@ independent of cost: a use-after-free is triggered by hitting the right
   sanitizer jobs use RelWithDebInfo plus an explicit `-UNDEBUG` to keep
   `assert()` alive rather than `Debug`. Dropping the asserts to buy
   speed would remove the checks those jobs exist to run.
-- **GitHub runner vs this M4: ~2.4x slower.** Derived, not guessed: the
-  nightly soak's 1,500 combos at 30,000 ops took 84 min on the runner
-  (3.36 s/combo) against 1.38 s/combo measured locally for identical
-  work. Multiply local timings by ~2.4 when sizing a CI budget.
+- **GitHub runner vs this M4: ~2.4x slower UNSANITIZED, ~3.8x
+  SANITIZED.** Two different factors, and using the first for sanitized
+  work underestimates badly. The 2.4x is derived from the nightly soak's
+  1,500 combos at 30,000 ops taking 84 min on the runner (3.36 s/combo)
+  against 1.38 s/combo locally.
+
+  Applying that same 2.4x to the sanitized nightly predicted 59 min; it
+  actually took **94 min, 1.59x over**, implying a ~3.8x factor for
+  sanitized workloads. The extra penalty is not compute -- it is ASan's
+  shadow-memory traffic against a runner with far less memory bandwidth
+  than an M4, which the compute-derived factor does not capture.
+
+  **So: multiply local timings by ~2.4 for plain builds and ~3.8 for
+  ASan/UBSan builds when sizing a CI budget.** Both current nightly jobs
+  still finish comfortably inside GitHub's 6h job limit (105 min and 95
+  min), so no budget was cut -- but a sweep sized with the wrong factor
+  would hit that ceiling sooner than its author expected.
 
 ### The generator-coverage assertion needs volume
 
