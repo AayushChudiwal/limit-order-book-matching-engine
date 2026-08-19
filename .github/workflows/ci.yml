@@ -28,15 +28,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # RelWithDebInfo, not Debug: measured on this project's own suite,
+      # Debug+sanitizers runs 118s against Release's 4.25s (28x) while
+      # RelWithDebInfo+sanitizers runs 38s (9.1x) -- 3x cheaper for the
+      # same sanitizer coverage, which matters because Phase 5 is about to
+      # add a much longer ASan-on-fuzz-corpus job on top of this.
+      #
+      # -UNDEBUG is load-bearing, NOT redundant: RelWithDebInfo defines
+      # NDEBUG, which would silently compile out every assert() in the
+      # engine -- including the 8 in optimized_order_book.cpp that check
+      # exactly the "locations_ points at a level/order that doesn't
+      # exist" invariants the step-4 arena work is most likely to break.
+      # Dropping asserts to buy speed would defeat the point of the job.
+      # Measured cost of keeping them: 38.14s vs 38.55s, i.e. free.
       - name: Configure
-        run: cmake -S . -B build-san -DCMAKE_BUILD_TYPE=Debug -DLOB_ENABLE_SANITIZERS=ON
+        run: >
+          cmake -S . -B build-san
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DLOB_ENABLE_SANITIZERS=ON
+          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g -UNDEBUG"
 
       - name: Build
-        run: cmake --build build-san --config Debug -j
+        run: cmake --build build-san -j
 
+      # detect_leaks is LINUX-ONLY: on macOS, ASan hard-aborts at startup
+      # with "detect_leaks is not supported on this platform", so every
+      # test reports "Subprocess aborted" and the failure looks like a
+      # real bug rather than a bad env var. It's correct here (this job
+      # is ubuntu-latest) but it made the job impossible to reproduce
+      # locally on the machine this project is developed on, so it's now
+      # set per-platform rather than unconditionally. To run this same
+      # job locally on macOS, drop ASAN_OPTIONS entirely:
+      #   cmake -S . -B build-san -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+      #     -DLOB_ENABLE_SANITIZERS=ON && cmake --build build-san -j
+      #   UBSAN_OPTIONS=print_stacktrace=1,halt_on_error=1 \
+      #     ctest --test-dir build-san --output-on-failure
       - name: Test
         env:
-          ASAN_OPTIONS: detect_leaks=1
+          ASAN_OPTIONS: detect_leaks=${{ runner.os == 'Linux' && '1' || '0' }}
           UBSAN_OPTIONS: print_stacktrace=1,halt_on_error=1
         run: ctest --test-dir build-san --output-on-failure
 
