@@ -28,19 +28,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # RelWithDebInfo, not Debug: measured on this project's own suite,
-      # Debug+sanitizers runs 118s against Release's 4.25s (28x) while
-      # RelWithDebInfo+sanitizers runs 38s (9.1x) -- 3x cheaper for the
-      # same sanitizer coverage, which matters because Phase 5 is about to
-      # add a much longer ASan-on-fuzz-corpus job on top of this.
+      # ============================================================
+      # DO NOT REMOVE -UNDEBUG. It is not redundant boilerplate.
+      # ============================================================
+      # RelWithDebInfo defines NDEBUG. NDEBUG compiles out assert().
+      # This engine keeps 8 asserts in src/optimized_order_book.cpp that
+      # check the "locations_ points at a level/order that actually
+      # exists" invariants -- exactly the class of corruption the step-4
+      # arena allocator is most likely to introduce, and exactly what
+      # docs/phase5_readiness.md says a behavioural differential test
+      # CANNOT see ("correct output, broken program").
       #
-      # -UNDEBUG is load-bearing, NOT redundant: RelWithDebInfo defines
-      # NDEBUG, which would silently compile out every assert() in the
-      # engine -- including the 8 in optimized_order_book.cpp that check
-      # exactly the "locations_ points at a level/order that doesn't
-      # exist" invariants the step-4 arena work is most likely to break.
-      # Dropping asserts to buy speed would defeat the point of the job.
-      # Measured cost of keeping them: 38.14s vs 38.55s, i.e. free.
+      # Without -UNDEBUG this job still passes, still says "ASan + UBSan",
+      # and silently tests STRICTLY LESS. A green check that means less
+      # than it appears to is worse than a missing one, because nobody
+      # goes looking. If you are here to simplify this flag away: the
+      # thing it protects is the reason the job exists.
+      #
+      # It is also not a speed/coverage tradeoff -- measured on this
+      # suite, keeping the asserts costs 38.14s vs 38.55s. It is free.
+      #
+      # (RelWithDebInfo rather than Debug is the speed decision, and a
+      # separate one: measured Release 4.25s, RelWithDebInfo+sanitizers
+      # 38s (9.1x), Debug+sanitizers 118s (28x). Same sanitizer coverage
+      # for 3x less time, which matters with a longer ASan-on-fuzz-corpus
+      # job landing on top of this one.)
       - name: Configure
         run: >
           cmake -S . -B build-san
