@@ -347,6 +347,20 @@ standalone, sudo-free reproduction of the exact warmup + cycling logic
 (no PMU involved, so no privilege needed) to settle this directly rather
 than adjust the guess until it fit:
 
+> **Reproducibility gap, noted during step 4:** that reproduction was a
+> throwaway and was never committed, so unlike this project's other
+> evidence tools (`fuzz_mutation_test`, `cache_line_probe`,
+> `tick_granularity_scan`) the numbers below cannot currently be
+> re-derived by anyone reading this. They were correct when taken -- they
+> match the committed CSV exactly, which is the check that mattered --
+> but "trust the transcript" is weaker than this project's usual
+> standard. The fix is a `--churn-only` mode on `bench_matching_engine`
+> that skips PMU setup entirely (churn counting needs no privilege; only
+> the cycle counters do), which would make both step 2's and step 4's
+> churn evidence runnable without root. Not done inside step 4's commit
+> because it means restructuring validated PMU code, which deserves its
+> own change and its own verification rather than riding along.
+
 ```
 resting orders: 133
 distinct levels: 110, overflow-mode (>=2 orders) levels: 17, max depth at one level: 4
