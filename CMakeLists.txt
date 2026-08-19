@@ -203,6 +203,16 @@ add_executable(tick_granularity_scan
 target_link_libraries(tick_granularity_scan PRIVATE lob_itch)
 target_compile_options(tick_granularity_scan PRIVATE -Wall -Wextra -Wpedantic)
 
+# Evidence tool for docs/phase5_step4_results.md's attribution table.
+# Portable and PMU-free (wall clock only), so it builds and runs on CI
+# and needs no privilege -- deliberately, since the conclusion it
+# supports should stay checkable.
+add_executable(add_depth_probe
+  tools/add_depth_probe.cpp
+)
+target_link_libraries(add_depth_probe PRIVATE lob_optimized_engine)
+target_compile_options(add_depth_probe PRIVATE -Wall -Wextra -Wpedantic)
+
 add_executable(fuzz_mutation_test
   tools/fuzz_mutation_test.cpp
 )

@@ -1,0 +1,28 @@
+=== bench_matching_engine ===
+CPU: Apple M4
+calibrated frequency this run: 4.167 GHz
+arena generation tags: OFF
+target symbol: SPY (stock_locate=7397)
+warmup: 45911 messages replayed, resting depth reached 133 (target 3000, NOT REACHED) -- stopped due to: Add reserve for the timed slice exhausted, (0 Replace with unknown original side, skipped)
+Adds used in warmup: 20886 of 29837 total (reserve for Add slice: 8951)
+real_adds collected (whole file, this symbol): 29837
+real Replace price deltas collected (whole file, this symbol): 1598
+resting orders in warmed book: 133 across 110 price levels (1.21 orders/level)
+
+--- results (mean cycles/op, single aggregate bracket per variant) ---
+  Add_real           ops=    8951  mean=   307.1 cycles (  73.7 ns)  l1d_refills= 1.886/op   storage_allocs=0.0000/op  
+  Add_widened        ops=    8951  mean=   318.3 cycles (  76.4 ns)  l1d_refills= 2.578/op   storage_allocs=0.0000/op  
+  [Cancel_traversal   pool=133 ops/round x 226 rounds]
+  Cancel_traversal   ops=   30058  mean=   159.7 cycles (  38.3 ns)  l1d_refills= 0.041/op   storage_allocs=0.0000/op  
+  [Cancel_shuffled    pool=133 ops/round x 226 rounds]
+  Cancel_shuffled    ops=   30058  mean=   160.1 cycles (  38.4 ns)  l1d_refills= 0.175/op   storage_allocs=0.0000/op  
+  [Reduce_traversal   pool=133 ops/round x 226 rounds]
+  Reduce_traversal   ops=   30058  mean=    77.5 cycles (  18.6 ns)  l1d_refills= 0.132/op   storage_allocs=0.0000/op  
+  [Reduce_shuffled    pool=133 ops/round x 226 rounds]
+  Reduce_shuffled    ops=   30058  mean=    85.4 cycles (  20.5 ns)  l1d_refills= 0.245/op   storage_allocs=0.0000/op  
+  [Replace_traversal  pool=133 ops/round x 226 rounds]
+  Replace_traversal  ops=   30058  mean=   506.3 cycles ( 121.5 ns)  l1d_refills= 0.197/op   storage_allocs=0.0000/op  
+  [Replace_shuffled   pool=133 ops/round x 226 rounds]
+  Replace_shuffled   ops=   30058  mean=   494.3 cycles ( 118.6 ns)  l1d_refills= 0.321/op   storage_allocs=0.0000/op  
+
+wrote bench/step4_spy_run_4.csv
