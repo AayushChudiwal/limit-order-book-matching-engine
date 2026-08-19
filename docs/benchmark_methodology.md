@@ -317,6 +317,30 @@ noise itself has changed. This isn't a rule for every commit -- Add's
 specifically for whenever the headline number is Cancel-sized or the
 margin is already thin.
 
+### When you collect N=20, the `0.894 · CoV%` shorthand no longer applies
+
+`0.894 · CoV%` is not the threshold formula; it's what the formula
+collapses to under two assumptions this document's original N=10 tables
+happened to satisfy: **equal N on both sides**, and **a single shared
+variance estimate**. The formula itself is
+`threshold = 2 · sqrt(s₁²/n₁ + s₂²/n₂)`, expressed as a percentage of
+the baseline mean. With `n₁ = n₂ = 10` and `s₁ ≈ s₂ = s`, that reduces
+to `2·s·sqrt(2/10) / mean = 0.894 · CoV%`.
+
+The moment you follow the N=20 rule above, `n₁ = 10` (the prior step's
+committed baseline) and `n₂ = 20`, so the shorthand is wrong -- and not
+conservatively wrong in a uniform direction. Use the full formula with
+each set's own observed stdev. `docs/phase5_step2_results.md` is the
+worked example: applying the shorthand there would have been *looser*
+than the correct threshold on the variants whose noise grew at N=20,
+and needlessly *tighter* on the ones that stayed quiet.
+
+Re-baselining both sides at N=20 is the alternative, and it's the
+cleaner comparison when the extra 10 runs on the baseline are cheap.
+It just isn't what the standing rule asks for, since the prior step's
+N=10 baseline is already committed and its binary may no longer be the
+one at `HEAD`.
+
 ## Reproducing this
 
 ```

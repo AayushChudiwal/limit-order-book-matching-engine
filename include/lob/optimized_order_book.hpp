@@ -83,21 +83,29 @@ class OptimizedOrderBook {
     // instance's lifetime is monotonic: kEmpty -> kInline -> maybe
     // kOverflow, never back down.
     //
-    // Known, bounded consequence of that "never back down" choice
-    // (confirmed via docs/phase5_step2_results.md's churn investigation,
-    // not just theorized): a level that peaks at 2+ orders, then gets
+    // Known, BOUNDED (not unbounded, reasoned through and checked
+    // against measured evidence, not just theorized -- see
+    // docs/phase5_step2_results.md) consequence of that "never back
+    // down" choice: a level that peaks at 2+ orders, then gets
     // cancelled back down to exactly 1 (never reaching 0), stays
     // "stranded" in overflow mode -- one heap-allocated deque holding a
-    // single element -- for the rest of its life, indistinguishable
-    // externally from a level that was only ever touched once. On the
-    // captured SPY warmup book, 18 of 110 levels (~16%) are stranded
-    // this way. Never worse than the old std::deque design (which always
-    // allocates from the first order regardless), just short of this
-    // design's full theoretical benefit for levels with that history
-    // shape. Not fixed here -- a future step could add an explicit
-    // downgrade-on-drain-to-1 if the real depth distribution ever makes
-    // that worth the added complexity; documented so it isn't
-    // rediscovered from scratch.
+    // single element -- until it eventually clears to zero and gets
+    // erased (at which point a fresh, non-stranded instance takes over).
+    // On the captured SPY warmup book, 18 of 110 levels (~16%) are
+    // stranded this way. This does NOT grow without bound over a longer
+    // session: SPY's resting-order count is independently measured to
+    // plateau rather than grow with message count
+    // (docs/benchmark_methodology.md), capping how many levels could
+    // ever be simultaneously stranded, and the same high cancel/requote
+    // churn that produces that plateau is exactly what clears levels
+    // back to zero and un-strands them -- numerator and denominator move
+    // together. Never worse than the old std::deque design (which always
+    // allocates from the first order regardless) either way. Not fixed
+    // here -- would be worth an explicit downgrade-on-drain-to-1 only if
+    // a future symbol/venue's order flow shows low cancel share and high
+    // resting persistence (weakening the un-stranding mechanism without
+    // weakening the rate levels first touch overflow); documented so it
+    // isn't rediscovered from scratch.
     //
     // Layout: mode_ (1 byte) + order_ (16 bytes: OrderId + Quantity,
     // each 8-byte) + overflow_ (8-byte pointer) fits well under the
