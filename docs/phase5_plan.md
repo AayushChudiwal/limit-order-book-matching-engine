@@ -30,23 +30,32 @@ already built generically for exactly this in Phase 3 -- see
 `tests/test_fuzz_differential_optimized.cpp`), and `bench_matching_engine`
 targets `OptimizedOrderBook` from step 2 onward.
 
-## The eight steps, in order
+## The steps, in order
+
+Originally eight; step 3 was removed after measurement (see "Step 3:
+removed, and why"), leaving seven. The numbering is deliberately left
+alone -- steps 4-8 keep their original numbers.
 
 1. **Hot-path hygiene** (done, commit `e2e0422`, results in
    `docs/phase5_step1_results.md`). Redundant `std::map` lookup
    elimination in the reference engine itself -- no data structure
    changes.
-2. **Singleton/small-size level optimization** (in progress). Real
+2. **Singleton/small-size level optimization** (done, commit `443dfd8`,
+   results in `docs/phase5_step2_results.md` -- N=20, 7 of 8 variants
+   improved, `Add_real`'s -3.07% regression measured and explained as a
+   benchmark measurement-boundary artefact). Real
    levels average ~1.2-1.3 orders on captured PSX/NASDAQ data
    (`docs/benchmark_methodology.md`) -- `LevelOrders` stores the first
    order inline (no heap allocation) and only allocates once a second
    order arrives at the same price. See
    `include/lob/optimized_order_book.hpp`'s class comment for the full
    design and its cache-layout reasoning.
-3. **Bitset + find-first-set for best bid/ask.** Replacing (or
-   augmenting) the `std::map`'s own `begin()`-is-best-price property
-   with a bitset over the tick range, so best-bid/best-ask becomes an
-   FFS instruction instead of a tree descent.
+3. ~~**Bitset + find-first-set for best bid/ask.**~~ **REMOVED as a
+   standalone step** -- its stated rationale was factually wrong. Folded
+   into step 6, where it costs almost nothing. See "Step 3: removed, and
+   why" below for the measurements. Steps are NOT renumbered: step 4 is
+   still called step 4 everywhere in this repo's history and docs, and
+   renumbering would silently invalidate every existing cross-reference.
 4. **Arena allocation.** Replacing per-node heap allocation (both for
    price levels and, depending how step 2 lands, order storage) with a
    pre-allocated arena -- the first step where `docs/phase5_readiness.md`'s
@@ -57,7 +66,8 @@ targets `OptimizedOrderBook` from step 2 onward.
    caller-supplied, sparse `OrderId`s) get translated to dense internal
    indices at the arena boundary, so the arena itself can be indexed
    directly rather than pointer-chased.
-6. **Flat price array.** Replacing the `std::map<Price, LevelQueue>`
+6. **Flat price array** (now also carries the former step 3's bitset).
+   Replacing the `std::map<Price, LevelQueue>`
    tree with a flat, tick-indexed array once steps 2-5 establish the
    node/storage layout it will hold. Ordered this late deliberately --
    see `docs/cache_hierarchy_m4.md`'s prefetcher section: Apple
@@ -88,6 +98,124 @@ flat array's own design (what goes in each slot) depends on what steps
 around; the flat array is ordered before intrusive lists and prefetch
 hints because those two are refinements *of* whatever the flat array
 turns out to need, not independent changes.
+
+## Step 3: removed, and why
+
+Recorded here in full rather than just deleted, because a step removed
+*with evidence* is a more useful artifact than a step completed on a
+false premise. This section is the evidence.
+
+### The premise was wrong
+
+Step 3 originally read: "so best-bid/best-ask becomes an FFS
+instruction instead of a **tree descent**." That phrasing came from the
+general LOB literature, where the structure being replaced is typically
+a balanced tree whose minimum genuinely costs a descent. It was never
+checked against `std::map` on libc++, which is what this engine
+actually uses.
+
+**`std::map::begin()` is not a tree descent.** libc++'s `__tree` caches
+the leftmost node in its header, so `begin()` is a pointer read.
+Measured, not assumed -- same-shape `std::map<Price, ...>`, timing
+`m.begin()->first`:
+
+| map size | 10 | 110 | 1,000 | 10,000 | 100,000 |
+|---|---:|---:|---:|---:|---:|
+| ns/call | 3.117 | 2.615 | 2.312 | 2.371 | 1.396 |
+
+Flat across four orders of magnitude (the mild *downward* drift is
+loop/cache noise, not scaling). At this book's measured 110 live levels
+that is ~11 cycles. **There is no O(log n) here to remove**, so the
+step's entire stated mechanism does not exist.
+
+### Almost nothing in the benchmark even calls it
+
+- `Add_widened` is the ONLY timed variant that calls
+  `BestBid()`/`BestAsk()` (`tools/bench_matching_engine.cpp:694-695`) --
+  and it is the *synthetic* variant, where those calls are the
+  harness's own price-widening arithmetic, not engine hot path.
+  "Winning" there would be optimizing the scaffolding.
+- `Add_real` and `Replace` touch `opposite.begin()` once per op inside
+  `MatchAgainst` (`src/optimized_order_book.cpp:82`), then break on the
+  non-crossing check. ~11 of 259 / 534 cycles.
+- **`Cancel` and `Reduce` never touch best-price at all** -- and Cancel
+  is step 2's single biggest win (+25-29%).
+
+### The maintenance cost is larger than the win, on the variants that matter
+
+A bitset must be updated on every price-level create/destroy. Those
+counts are already measured in `bench/step2_churn_spy.csv`. At ~9 cycles
+per update (load word, mask, store, plus index arithmetic), against the
+N=20 cycle counts and thresholds in `docs/phase5_step2_results.md`:
+
+| Variant | bit-ops/op | added cycles | as % of cycles | threshold % | |
+|---|---:|---:|---:|---:|---|
+| Cancel_traversal | 0.827 | +7.4 | 4.24% | 1.70% | **regression** |
+| Cancel_shuffled | 0.827 | +7.4 | 4.38% | 1.62% | **regression** |
+| Replace_traversal | 1.508 | +13.6 | 2.54% | 1.56% | **regression** |
+| Replace_shuffled | 1.451 | +13.1 | 2.53% | 1.49% | **regression** |
+| Add_widened | 0.351 | +3.2 | 0.78% | 1.55% | below noise |
+| Add_real | 0.036 | +0.3 | 0.13% | 2.48% | below noise |
+| Reduce (both) | 0.000 | 0 | 0.00% | ~0.97% | below noise |
+
+So the expected outcome of shipping step 3 standalone was: a few percent
+on one synthetic variant, nothing measurable anywhere else on the read
+side, and a **significant regression on Cancel and Replace** -- undoing
+a meaningful share of step 2's largest wins to buy a lookup that was
+already a pointer read.
+
+### Why folding it into step 6 is the right home
+
+Step 6 removes the `std::map` entirely in favour of a flat tick-indexed
+array. At that point level insert/erase are already array writes, so
+maintaining an occupancy bitset alongside them is largely absorbed into
+work the step is doing anyway -- and the bitset stops being a redundant
+index over a tree that already knows its own minimum, and becomes the
+thing that *gives* the flat array an ordered-traversal capability it
+otherwise lacks. The cost/benefit inverts precisely because the map is
+gone.
+
+### Two findings step 6 must not inherit naively
+
+Both came out of sizing the bitset and are recorded here so step 6
+starts from measurement rather than from the SPY-shaped intuition that
+produced step 3:
+
+1. **Penny granularity is symbol-specific, NOT venue-wide.** SPY's
+   prices are 100% penny multiples (0 sub-penny in 31,435 NASDAQ and
+   353,212 PSX priced messages), which makes penny-indexing look safe
+   and shrinks the bitset ~100x. It does not generalize. Scanning every
+   symbol's Add/Replace prices in both captured files:
+
+   | venue | symbols | priced msgs | sub-penny | symbols w/ any |
+   |---|---:|---:|---:|---:|
+   | NASDAQ 07/30/2019 | 5,805 | 3,043,132 | 28,292 (0.93%) | 175 |
+   | PSX 07/30/2019 | 6,768 | 16,165,067 | 36,717 (0.23%) | 272 |
+
+   The offenders are exactly what Reg NMS Rule 612 predicts -- low-priced
+   stocks, where sub-penny quoting is legal below $1.00: KTOV
+   ($0.51-$3.14) 36.9% sub-penny across 53,990 messages, MYSZ
+   ($0.01-$1.87) **96.3%**, IGLD 98.3%, MTFB 98.2%, TGB 100%. A flat
+   array that indexes by penny would collapse distinct price levels onto
+   one slot for these symbols. Index by raw tick, or derive the
+   increment per symbol and verify it -- never assume 100.
+
+   The existing differential fuzzer covers this specific risk already:
+   `src/fuzz/generator.cpp` builds prices as `mid_price_ +/- magnitude`
+   in raw ticks, so it naturally emits non-multiples of 100.
+
+2. **`199999.9900` (1,999,999,900 ticks) is a sentinel, not a price.**
+   2,625 of NASDAQ's 5,805 symbols report it as their maximum; PSX's
+   file has zero. Any min/max-derived array sizing that swallows it
+   spans ~2 billion ticks. It must be excluded explicitly.
+
+### The readiness-doc gap this also moves
+
+`docs/phase5_readiness.md` lists "flat array tick-band drift/rebasing"
+as caught only "partially, by chance," needing a dedicated price-drift
+generator profile. That gap was filed against the flat array. Since the
+bitset now arrives with it, the profile is a step-6 prerequisite, not a
+later refinement.
 
 ## Standing rules, every step
 

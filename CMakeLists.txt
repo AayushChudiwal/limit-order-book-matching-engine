@@ -161,6 +161,15 @@ add_executable(itch_snapshot_dump
 target_link_libraries(itch_snapshot_dump PRIVATE lob_engine lob_itch)
 target_compile_options(itch_snapshot_dump PRIVATE -Wall -Wextra -Wpedantic)
 
+# Portable (lob_itch only, no engine, no PMU) -- deliberately buildable
+# on Linux CI: it is the committed evidence for docs/phase5_plan.md's
+# step-3 removal and step-6 sizing constraints, so it should not rot.
+add_executable(tick_granularity_scan
+  tools/tick_granularity_scan.cpp
+)
+target_link_libraries(tick_granularity_scan PRIVATE lob_itch)
+target_compile_options(tick_granularity_scan PRIVATE -Wall -Wextra -Wpedantic)
+
 add_executable(fuzz_mutation_test
   tools/fuzz_mutation_test.cpp
 )
