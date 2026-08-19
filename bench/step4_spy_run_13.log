@@ -10,19 +10,19 @@ real Replace price deltas collected (whole file, this symbol): 1598
 resting orders in warmed book: 133 across 110 price levels (1.21 orders/level)
 
 --- results (mean cycles/op, single aggregate bracket per variant) ---
-  Add_real           ops=    8951  mean=   177.6 cycles (  41.3 ns)  l1d_refills= 1.239/op   storage_allocs=0.0000/op  
-  Add_widened        ops=    8951  mean=   278.8 cycles (  64.9 ns)  l1d_refills= 2.598/op   storage_allocs=0.0000/op  
+  Add_real           ops=    8951  mean=   182.0 cycles (  42.3 ns)  l1d_refills= 1.230/op   storage_allocs=0.0000/op  
+  Add_widened        ops=    8951  mean=   291.8 cycles (  67.9 ns)  l1d_refills= 2.526/op   storage_allocs=0.0000/op  
   [Cancel_traversal   pool=133 ops/round x 226 rounds]
-  Cancel_traversal   ops=   30058  mean=   164.8 cycles (  38.3 ns)  l1d_refills= 0.045/op   storage_allocs=0.0000/op  
+  Cancel_traversal   ops=   30058  mean=   165.3 cycles (  38.5 ns)  l1d_refills= 0.039/op   storage_allocs=0.0000/op  
   [Cancel_shuffled    pool=133 ops/round x 226 rounds]
-  Cancel_shuffled    ops=   30058  mean=   157.7 cycles (  36.7 ns)  l1d_refills= 0.185/op   storage_allocs=0.0000/op  
+  Cancel_shuffled    ops=   30058  mean=   157.3 cycles (  36.6 ns)  l1d_refills= 0.096/op   storage_allocs=0.0000/op  
   [Reduce_traversal   pool=133 ops/round x 226 rounds]
-  Reduce_traversal   ops=   30058  mean=    72.4 cycles (  16.8 ns)  l1d_refills= 0.102/op   storage_allocs=0.0000/op  
+  Reduce_traversal   ops=   30058  mean=    72.2 cycles (  16.8 ns)  l1d_refills= 0.086/op   storage_allocs=0.0000/op  
   [Reduce_shuffled    pool=133 ops/round x 226 rounds]
-  Reduce_shuffled    ops=   30058  mean=    78.2 cycles (  18.2 ns)  l1d_refills= 0.129/op   storage_allocs=0.0000/op  
+  Reduce_shuffled    ops=   30058  mean=    76.6 cycles (  17.8 ns)  l1d_refills= 0.070/op   storage_allocs=0.0000/op  
   [Replace_traversal  pool=133 ops/round x 226 rounds]
-  Replace_traversal  ops=   30058  mean=   493.5 cycles ( 114.8 ns)  l1d_refills= 0.301/op   storage_allocs=0.0000/op  
+  Replace_traversal  ops=   30058  mean=   507.9 cycles ( 118.2 ns)  l1d_refills= 0.379/op   storage_allocs=0.0000/op  [MIGRATED]
   [Replace_shuffled   pool=133 ops/round x 226 rounds]
-  Replace_shuffled   ops=   30058  mean=   480.3 cycles ( 111.8 ns)  l1d_refills= 0.319/op   storage_allocs=0.0000/op  
+  Replace_shuffled   ops=   30058  mean=   487.6 cycles ( 113.5 ns)  l1d_refills= 0.321/op   storage_allocs=0.0000/op  
 
-wrote bench/step4_spy_run_3.csv
+wrote bench/step4_spy_run_13.csv

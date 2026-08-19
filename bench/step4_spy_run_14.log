@@ -1,0 +1,28 @@
+=== bench_matching_engine ===
+CPU: Apple M4
+calibrated frequency this run: 4.273 GHz
+arena generation tags: OFF
+target symbol: SPY (stock_locate=7397)
+warmup: 45911 messages replayed, resting depth reached 133 (target 3000, NOT REACHED) -- stopped due to: Add reserve for the timed slice exhausted, (0 Replace with unknown original side, skipped)
+Adds used in warmup: 20886 of 29837 total (reserve for Add slice: 8951)
+real_adds collected (whole file, this symbol): 29837
+real Replace price deltas collected (whole file, this symbol): 1598
+resting orders in warmed book: 133 across 110 price levels (1.21 orders/level)
+
+--- results (mean cycles/op, single aggregate bracket per variant) ---
+  Add_real           ops=    8951  mean=   175.7 cycles (  41.1 ns)  l1d_refills= 1.233/op   storage_allocs=0.0000/op  
+  Add_widened        ops=    8951  mean=   270.0 cycles (  63.2 ns)  l1d_refills= 2.594/op   storage_allocs=0.0000/op  
+  [Cancel_traversal   pool=133 ops/round x 226 rounds]
+  Cancel_traversal   ops=   30058  mean=   165.0 cycles (  38.6 ns)  l1d_refills= 0.025/op   storage_allocs=0.0000/op  
+  [Cancel_shuffled    pool=133 ops/round x 226 rounds]
+  Cancel_shuffled    ops=   30058  mean=   156.4 cycles (  36.6 ns)  l1d_refills= 0.115/op   storage_allocs=0.0000/op  
+  [Reduce_traversal   pool=133 ops/round x 226 rounds]
+  Reduce_traversal   ops=   30058  mean=    72.8 cycles (  17.0 ns)  l1d_refills= 0.084/op   storage_allocs=0.0000/op  
+  [Reduce_shuffled    pool=133 ops/round x 226 rounds]
+  Reduce_shuffled    ops=   30058  mean=    77.3 cycles (  18.1 ns)  l1d_refills= 0.102/op   storage_allocs=0.0000/op  
+  [Replace_traversal  pool=133 ops/round x 226 rounds]
+  Replace_traversal  ops=   30058  mean=   492.0 cycles ( 115.1 ns)  l1d_refills= 0.264/op   storage_allocs=0.0000/op  
+  [Replace_shuffled   pool=133 ops/round x 226 rounds]
+  Replace_shuffled   ops=   30058  mean=   477.9 cycles ( 111.8 ns)  l1d_refills= 0.261/op   storage_allocs=0.0000/op  
+
+wrote bench/step4_spy_run_14.csv

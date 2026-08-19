@@ -1,6 +1,6 @@
 === bench_matching_engine ===
 CPU: Apple M4
-calibrated frequency this run: 4.011 GHz
+calibrated frequency this run: 4.110 GHz
 arena generation tags: OFF
 target symbol: SPY (stock_locate=7397)
 warmup: 45911 messages replayed, resting depth reached 133 (target 3000, NOT REACHED) -- stopped due to: Add reserve for the timed slice exhausted, (0 Replace with unknown original side, skipped)
@@ -10,19 +10,19 @@ real Replace price deltas collected (whole file, this symbol): 1598
 resting orders in warmed book: 133 across 110 price levels (1.21 orders/level)
 
 --- results (mean cycles/op, single aggregate bracket per variant) ---
-  Add_real           ops=    8951  mean=   304.6 cycles (  75.9 ns)  l1d_refills= 1.909/op   storage_allocs=0.0000/op  
-  Add_widened        ops=    8951  mean=   314.5 cycles (  78.4 ns)  l1d_refills= 2.505/op   storage_allocs=0.0000/op  
+  Add_real           ops=    8951  mean=   181.6 cycles (  44.2 ns)  l1d_refills= 1.299/op   storage_allocs=0.0000/op  
+  Add_widened        ops=    8951  mean=   274.5 cycles (  66.8 ns)  l1d_refills= 2.552/op   storage_allocs=0.0000/op  
   [Cancel_traversal   pool=133 ops/round x 226 rounds]
-  Cancel_traversal   ops=   30058  mean=   167.6 cycles (  41.8 ns)  l1d_refills= 0.008/op   storage_allocs=0.0000/op  
+  Cancel_traversal   ops=   30058  mean=   165.4 cycles (  40.3 ns)  l1d_refills= 0.004/op   storage_allocs=0.0000/op  
   [Cancel_shuffled    pool=133 ops/round x 226 rounds]
-  Cancel_shuffled    ops=   30058  mean=   162.0 cycles (  40.4 ns)  l1d_refills= 0.043/op   storage_allocs=0.0000/op  
+  Cancel_shuffled    ops=   30058  mean=   161.5 cycles (  39.3 ns)  l1d_refills= 0.023/op   storage_allocs=0.0000/op  
   [Reduce_traversal   pool=133 ops/round x 226 rounds]
-  Reduce_traversal   ops=   30058  mean=    80.2 cycles (  20.0 ns)  l1d_refills= 0.205/op   storage_allocs=0.0000/op  
+  Reduce_traversal   ops=   30058  mean=    71.9 cycles (  17.5 ns)  l1d_refills= 0.108/op   storage_allocs=0.0000/op  
   [Reduce_shuffled    pool=133 ops/round x 226 rounds]
-  Reduce_shuffled    ops=   30058  mean=    85.3 cycles (  21.3 ns)  l1d_refills= 0.238/op   storage_allocs=0.0000/op  
+  Reduce_shuffled    ops=   30058  mean=    76.9 cycles (  18.7 ns)  l1d_refills= 0.109/op   storage_allocs=0.0000/op  
   [Replace_traversal  pool=133 ops/round x 226 rounds]
-  Replace_traversal  ops=   30058  mean=   497.1 cycles ( 123.9 ns)  l1d_refills= 0.452/op   storage_allocs=0.0000/op  
+  Replace_traversal  ops=   30058  mean=   497.4 cycles ( 121.0 ns)  l1d_refills= 0.278/op   storage_allocs=0.0000/op  
   [Replace_shuffled   pool=133 ops/round x 226 rounds]
-  Replace_shuffled   ops=   30058  mean=   483.2 cycles ( 120.5 ns)  l1d_refills= 0.511/op   storage_allocs=0.0000/op  
+  Replace_shuffled   ops=   30058  mean=   482.4 cycles ( 117.4 ns)  l1d_refills= 0.252/op   storage_allocs=0.0000/op  
 
 wrote bench/step4_spy_run_1.csv

@@ -56,7 +56,10 @@ alone -- steps 4-8 keep their original numbers.
    why" below for the measurements. Steps are NOT renumbered: step 4 is
    still called step 4 everywhere in this repo's history and docs, and
    renumbering would silently invalidate every existing cross-reference.
-4. **Arena allocation.** Replacing per-node heap allocation (both for
+4. **Arena allocation** (done, commits `4b0e71e` + `e261bbb`, results in
+   `docs/phase5_step4_results.md` -- N=20, 8 of 8 variants improved, the
+   first step with no regression anywhere; L1D refills down on every
+   variant, up to -80.9%). Replacing per-node heap allocation (both for
    price levels and, depending how step 2 lands, order storage) with a
    pre-allocated arena -- the first step where `docs/phase5_readiness.md`'s
    "arena allocator reusing a node still referenced" concern becomes
